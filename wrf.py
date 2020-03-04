@@ -1,0 +1,1119 @@
+### This module contains classes for handling Weather Research and Forecasting model
+### grids, inputs, and outputs.
+### Written by Christopher Phillips
+### University of Alabama in Huntsville
+### Atmospheric and Earth Science Department
+###
+### Requirements:
+###   Python 3+
+###   Atmos (available at github.com/sodoesaburningbus)
+###   Cartopy
+###   f90NML
+###   Matplotlib
+###   NetCDF4
+###   Numpy
+###   PIL
+###   PyMODIS (available at github.com/sodoesaburningbus)
+
+### Importing required modules
+import atmos.thermo as at
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import datetime as dt
+import glob
+import f90nml
+from matplotlib.patches import Rectangle
+import matplotlib.pyplot as pp
+import netCDF4 as nc
+import numpy
+from PIL import Image
+from pymodis.modislc import MCD12C1
+import sys
+
+############################################################
+#----------------------    WPSNL     ----------------------#
+############################################################
+### The WPSNL class provides tools for creating the WPS
+### namelist. It first reads in a template and allows the
+### user to make changes. It can also generate a matching WRF
+### namelist provided a template.
+
+class WPSNL:
+
+    ### Method to construct object
+    ### Inputs:
+    ###   namelist, string, path to WRF namelist template
+    def __init__(self, namelist):
+    
+        #Create namelist object
+        try:
+            self.nml = f90nml.read(namelist)
+        except:
+            print("{} not found.".format(namelist))
+            sys.exit(2)
+        
+        #Pull in namelist information
+        self.read_nml()
+        
+        #Returning
+        return
+        
+    ### Method to create WRF namelist from WPS namelist
+    ### Note that it does not change physics from the template
+    ### except for cumulus parameterization. For CU param,
+    ### grids with dx > 4km have parameterization turned on.
+    ### Inputs:
+    ###   template, string, path to WRF namelist template
+    ###   output, string, path to write new WRF namelist
+    def create_wrfnml(self, template, output):
+    
+        #Create WRF namelist object
+        try:
+            wrfnml = f90nml.read(template)
+        except:
+            print("{} not found.".format(template))
+            sys.exit(2)
+            
+        #Update WPS namelist information
+        self.read_nml()
+
+        ### Setup new time controls
+        #Start times
+        wrfnml["time_control"]["start_year"] = list(int(date.strftime("%Y")) for date in self.sdate)
+        wrfnml["time_control"]["start_month"] = list(int(date.strftime("%m")) for date in self.sdate)
+        wrfnml["time_control"]["start_day"] = list(int(date.strftime("%d")) for date in self.sdate)
+        wrfnml["time_control"]["start_hour"] = list(int(date.strftime("%H")) for date in self.sdate)
+        wrfnml["time_control"]["start_minute"] = list(int(date.strftime("%M")) for date in self.sdate)
+        wrfnml["time_control"]["start_second"] = list(int(date.strftime("%S")) for date in self.sdate)
+
+        #End times
+        wrfnml["time_control"]["end_year"] = list(int(date.strftime("%Y")) for date in self.edate)
+        wrfnml["time_control"]["end_month"] = list(int(date.strftime("%m")) for date in self.edate)
+        wrfnml["time_control"]["end_day"] = list(int(date.strftime("%d")) for date in self.edate)
+        wrfnml["time_control"]["end_hour"] = list(int(date.strftime("%H")) for date in self.edate)
+        wrfnml["time_control"]["end_minute"] = list(int(date.strftime("%M")) for date in self.edate)
+        wrfnml["time_control"]["end_second"] = list(int(date.strftime("%S")) for date in self.edate)
+        
+        #Boundary file interval
+        wrfnml["time_control"]["interval_seconds"] = self.interval
+        
+        ### Setup new domain specifications
+        wrfnml["domains"]["time_step"] = int(numpy.ceil(self.dx[0]/1000*6))
+        wrfnml["domains"]["max_dom"] = self.ngrids
+        wrfnml["domains"]["e_we"] = list(self.nx)
+        wrfnml["domains"]["e_sn"] = list(self.ny)
+        wrfnml["domains"]["dx"] = list(self.dx)
+        wrfnml["domains"]["dy"] = list(self.dy)
+        wrfnml["domains"]["grid_id"] = list(numpy.array(self.nml["geogrid"]["parent_id"], dtype="int")+1)
+        wrfnml["domains"]["parent_id"] = self.nml["geogrid"]["parent_id"]
+        wrfnml["domains"]["i_parent_start"] = self.nml["geogrid"]["i_parent_start"]
+        wrfnml["domains"]["j_parent_start"] = self.nml["geogrid"]["j_parent_start"]
+        wrfnml["domains"]["parent_grid_ratio"] = list(self.grid_ratio)
+        wrfnml["domains"]["parent_time_step_ratio"] = list(self.grid_ratio) #Keep space/time constant
+
+        ### Physics
+        #Cumulus (Option 3 over US to match NCAR)
+        cu = [] #list to hold CU settings
+        for dx in self.dx:
+            if (dx > 4000): #Limit CU to spacing > 4km
+                cu.append(3)
+            else:
+                cu.append(0)
+        wrfnml["physics"]["cu_physics"] = cu #Set new CU parameterization
+        
+        ### Write new WRF namelist
+        wrfnml.write(output, force=True)
+
+        #Deleting WRF namelist object after writing
+        del(wrfnml)
+            
+        #Returning
+        return
+        
+    ### Method to change WPS namelist
+    ### Inputs:
+    ###   share, dictionary, contains WPS namelist variables within the share group
+    ###     must be keyed with variable name corresponding to namelist, e.g. "wrf_core"
+    ###   geogrid, dictionary, contains WPS namelist variables within the geogrid group
+    ###   ungrib, dictionary, contains WPS namelist variables within the ungrib group
+    ###   metgrid, dictionary, contains WPS namelist variables within the metgrid group
+    def set_nml(self, share={}, geogrid={}, ungrib={}, metgrid={}):
+        #Set new share variables
+        for k in share.keys():
+            self.nml["share"][k] = share[k]
+            
+        #Set new geogrid variables
+        for k in geogrid.keys():
+            self.nml["geogrid"][k] = geogrid[k]
+            
+        #Set new ungrib variables
+        for k in ungrib.keys():
+            self.nml["ungrib"][k] = ungrib[k]
+            
+        #Set new metgrid variables
+        for k in metgrid.keys():
+            self.nml["metgrid"][k] = metgrid[k]
+            
+        #Returning
+        return    
+
+        
+    #------ Methods below this line are primarily for internal use ------#
+    
+    ### Method to read in WPS namelist attributes
+    ### and derive further grid information
+    def read_nml(self):
+
+        ### Pull time information
+        self.sdate = list(dt.datetime.strptime(date, "%Y-%m-%d_%H:%M:%S") for date in self.nml["share"]["start_date"])
+        self.edate = list(dt.datetime.strptime(date, "%Y-%m-%d_%H:%M:%S") for date in self.nml["share"]["end_date"])
+        self.interval = self.nml["share"]["interval_seconds"] #Boundary file interval
+
+        ### Pull map information
+        self.lat0 = self.nml["geogrid"]["ref_lat"]       #Domain center
+        self.lon0 = self.nml["geogrid"]["ref_lon"]       #Domain center
+        self.slat1 = self.nml["geogrid"]["truelat1"]     #Standard parallel 1
+        self.slat2 = self.nml["geogrid"]["truelat2"]     #Standard parallel 2
+        self.slon1 = self.nml["geogrid"]["stand_lon"]    #Standard longitude
+        self.proj_name = self.nml["geogrid"]["map_proj"] #Map projection name
+                
+        ### Pull WRF Grid information                
+        
+        #Number of grids in domain
+        self.ngrids = self.nml["share"]["max_dom"]
+        
+        #Number of points in x and y directions
+        self.nx = numpy.array(self.nml["geogrid"]["e_we"])[:self.ngrids]
+        self.ny = numpy.array(self.nml["geogrid"]["e_sn"])[:self.ngrids]
+        self.dx = numpy.ones(self.ngrids)*self.nml["geogrid"]["dx"]
+        self.dy = numpy.ones(self.ngrids)*self.nml["geogrid"]["dy"]
+
+        #Ratio of each grid to its parent and corresponding grid spacings.
+        self.grid_ratio = numpy.array(self.nml["geogrid"]["parent_grid_ratio"])[:self.ngrids]
+        
+        #Compute grid spacing
+        ratio = self.grid_ratio[0]
+        for i in range(1, len(self.grid_ratio)):
+            ratio *= self.grid_ratio[i]
+            self.dx[i] /= ratio
+            self.dy[i] /= ratio
+            
+        #Returning
+        return
+
+############################################################
+#--------------------     WRFgrid     ---------------------#
+############################################################
+### The WRFgrid class provides tools for visualizing the WRF
+### grid before the model is even run. It requires only a WPS
+### namelist to provide the grid information.
+###
+### Available Attributes:
+### nml - f90nml namelist object
+### proj_name - Name of model grid projection
+### proj - Cartopy projection object for model grid
+### pcp - Cartopy PlateCarree projection object
+### lat0 - Domain center latitude
+### lon0 - Domain center longitude
+### slat1 - Standard parallel 1
+### slat2 - Standard parallel 2
+### slon1 - Standard longitude
+### clat - Center latitude of each grid
+### clon - Center longitude of each grid
+### extent - Bounds of each grid (in grid projection coordinates)
+### gwidth - Width of each grid (x span)
+### gheight - Height of each grid (y span)
+### cg - Current grid being handled
+### ngrids - Number of grids in domain
+### nx - Number of x points on each grid
+### ny - Number of y points on each grid
+### grid_ratio - Ratio of grid spacing between each grid and its parent
+### dx - x grid spacing on each grid
+### dy - y grid spacing on each grid
+### lcfile - File path of landcover dataset used in plotting
+###
+### Available Methods:
+### find_point(lon, lat) - Compute nearest grid location to a given lon/lat
+### plot_grid() - Plot grid and all interior grids
+### set_cg(gid) - Set current working grid
+### set_lcfile(filepath) - Set location of landcover data file used in plotting
+
+class WRFgrid:
+    ### Method to construct object
+    ### Inputs:
+    ###   namelist, string, path to WRF namelist file to be read in
+    def __init__(self, namelist):
+        
+        #First thing is to open WRF namelist file
+        try:
+            self.nml = f90nml.read(namelist)
+        except:
+            print("{} not found.".format(namelist))
+            sys.exit(2)
+                            
+        ### Identify WRF grid map projection
+        #Create dictionary with possible projections
+        proj_list = {"mercator":self.mercator, "lambert":self.lambert, "polar":self.polar,
+            "lat-lon":self.latlon}
+            
+        #Pull map information
+        self.lat0 = self.nml["geogrid"]["ref_lat"]       #Domain center
+        self.lon0 = self.nml["geogrid"]["ref_lon"]       #Domain center
+        self.slat1 = self.nml["geogrid"]["truelat1"]     #Standard parallel 1
+        self.slat2 = self.nml["geogrid"]["truelat2"]     #Standard parallel 2
+        self.slon1 = self.nml["geogrid"]["stand_lon"]    #Standard longitude
+        self.proj_name = self.nml["geogrid"]["map_proj"] #Map projection name
+        
+        #Setup map projection
+        self.proj = proj_list[self.proj_name]() #Model projection
+        self.pcp = ccrs.PlateCarree()           #Lat/lon projection for interal use
+        
+        ### Compute WRG Grid information                
+        #Set current grid
+        self.cg = 1 #Start with the parent grid
+        
+        #Grab domain information
+        #Number of grids in domain
+        self.ngrids = self.nml["share"]["max_dom"]
+        
+        #Number of points in x and y directions
+        self.nx = numpy.array(self.nml["geogrid"]["e_we"])[:self.ngrids]
+        self.ny = numpy.array(self.nml["geogrid"]["e_sn"])[:self.ngrids]
+
+        #Ratio of each grid to its parent and corresponding grid spacings.
+        self.grid_ratio = numpy.array(self.nml["geogrid"]["parent_grid_ratio"])[:self.ngrids]
+        self.dx = numpy.ones(self.ngrids)*self.nml["geogrid"]["dx"] #Only starting value
+        self.dy = numpy.ones(self.ngrids)*self.nml["geogrid"]["dy"] #Only starting value
+        
+        #Compute grid spacing
+        ratio = self.grid_ratio[0]
+        for i in range(1, len(self.grid_ratio)):
+            ratio *= self.grid_ratio[i]
+            self.dx[i] /= ratio
+            self.dy[i] /= ratio
+        
+        #Calculate grid widths and heights
+        self.gwidth = (self.nx-1)*self.dx
+        self.gheight = (self.ny-1)*self.dy
+        
+        #Calculate grid centers
+        (self.clat, self.clon) = self.get_centers()
+        
+        #Calculate grid extents
+        self.extent = list(self.get_extent(gid=i) for i in range(1, self.ngrids+1))
+
+        #Attach land cover dataset as attribute.
+        self.lcfile = "MCD12C1.A2018001.006.2019200161458.hdf"
+
+        #Returning
+        return
+    
+    ### Method to retrieve closest grid point to desired location
+    ### Inputs:
+    ###   lon, float or list of floats, longitude of desired point
+    ###   lat, float or list of floats, latitude of desired point
+    ###   gid=, integer, optional, grid to find nearest point for. Defaults to current grid.
+    ###
+    ### Outputs:
+    ###   (xi, yj), tuple of ints or list of ints, index of grid point closest to given point
+    ###     xi corresponds to lon; yj corresponds to lat.
+    def find_point(self, lon, lat, gid=None):
+        #Set gid to default if required
+        if (gid == None):
+            gid = self.cg
+        
+        #Force lon and lats into lists.
+        #This enables program consistency and user convenience.
+        if not isinstance(lon, list):
+            lon = [lon]
+            lat = [lat]
+
+        #Lists to grid points closest to user points
+        xi = []
+        yj = []
+
+        #Now for each lon/lat pair find the closest domain point.
+        for (ulon, ulat) in zip(lon, lat):
+            #Transform point to GFS projection
+            (x, y) = self.proj.transform_point(ulon, ulat, self.pcp)
+
+            #Check that desired location is within model grid
+            if ((x < self.extent[gid-1][0]) or (x > self.extent[gid-1][1]) or
+                (y < self.extent[gid-1][2]) or (y > self.extent[gid-1][3])):
+                
+                print("Point Lon: {}, Lat: {}) is outside model grid {}. Exiting...".format(ulon,ulat,gid))
+                sys.exit(2)
+
+            #Calculate index of each point
+            xi.append(int(round((x-self.extent[gid-1][0])/self.dx[gid-1])))
+            yj.append(int(round((self.extent[gid-1][3]-y)/self.dy[gid-1])))
+
+        #Return indices to user (only return lists if user gave list)
+        if (len(xi) > 1):
+            return (xi, yj)
+        else:
+            return (xi[0], yj[0])
+    
+    ### Method to plot WRF grids
+    ### Given a grid ID, it plots that grid and all within.
+    ### Inputs:
+    ###   gid=, integer, optional, Outer most grid ID to plot. If not provided, defaults to current grid.
+    ###   lc=, boolean, optional, Flag to include land cover imagery. Defaults to False.
+    ###   points=, list of tuples, optional, tuples of lon/lat pairs.
+    ###   savep=, string, optional, location to save domain plot. Displays if omitted.
+    def plot_grid(self, gid=None, lc=False, points=[], spath=None):
+               
+        #Set gid to default if required
+        if (gid == None):
+            gid = self.cg
+               
+        #Check that requested grid is not larger than number of grids in model
+        if (gid > self.ngrids): #Print warning
+            print("Grid {} non-existent. Plotting outermost grid".format(gid))
+            gid = 1
+        
+        #Setup figure and axis objects
+        fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.proj})
+        
+        #Set plot extent
+        ax.set_extent(self.extent[gid-1], self.proj)
+        
+        #Add background image
+        if lc:
+            self.plot_landcover(ax, gid)
+        else:
+            ax.stock_img()
+            
+        #Add map features
+        ax.coastlines()
+        gl = ax.gridlines(color="black", linestyle="--", draw_labels=False)
+        
+        #Now add interior domains
+        for i in range(gid-1, self.ngrids):
+            box = Rectangle((self.extent[i][0], self.extent[i][2]), self.gwidth[i],
+                self.gheight[i], color="red", fill=False, transform=self.proj)
+            ax.add_patch(box)
+        
+        #Add any given points
+        for p in points:
+            ax.scatter(p[0], p[1], color="black", transform=self.pcp)
+        
+        #Display the image
+        pp.tight_layout()
+        if (spath == None):
+            pp.show()
+        else:
+            pp.savefig(spath)
+        
+        #Returning
+        return
+        
+    ### Method to set the current WRF grid being examined
+    ### Inputs:
+    ###   gid, integer, WRF grid ID to be set as current working grid
+    def set_cg(self, gid):
+    
+        #Check that new grid is not larger than number of grids in model
+        if (gid > self.ngrids): #Print warning and return without modifying curent grid
+            print("Grid {} non-existent. Max grid is: {}".format(gid, self.ngrids))
+            return
+        
+        #Set new current grid
+        self.cg = gid
+        
+    ### Method to specify location of land cover data file
+    ### By default, object searches within the local directory.
+    ### Inputs:
+    ###   filepath, string, full path to MODIS land cover data file.
+    def set_lcfile(self, filepath):
+        
+        #Set new file location
+        self.lcfile = filepath
+        
+        #Returning
+        return
+    
+    #------ Methods below this line are primarily for internal use ------#
+    
+    ### Method for calculating grid center lat/lons
+    ### Outputs:
+    ###   (clat, clon), tuple of arrays of floats, Grid center latitudes, grid center longitudes
+    def get_centers(self):
+       
+        #Initialize local arrays for calculations
+        clat = numpy.ones(self.ngrids)*self.lat0 #Multiply by lat0 sets the first grid center to the proper value
+        clon = numpy.ones(self.ngrids)*self.lon0 #Multiply by lon0 sets the first grid center to the proper value
+                
+        #Calculate coordinates of lower-left corner of outermost domain
+        (xc, yc) = self.proj.transform_point(self.lon0, self.lat0, self.pcp) #Get center
+        x0 = xc-self.gwidth[0]/2  #Identify left boundary
+        y0 = yc-self.gheight[0]/2 #Identify bottom boundary
+               
+        #Grab starting points of each domain
+        i0 = self.nml["geogrid"]["i_parent_start"]
+        j0 = self.nml["geogrid"]["j_parent_start"]
+                        
+        #Now calculate grid centers
+        for i in range(1, self.ngrids):
+            #Compute lower left point of current domain
+            x0 += (i0[i]-1)*self.dx[i-1]
+            y0 += (j0[i]-1)*self.dy[i-1]
+            
+            #Calculating grid center
+            xc = x0+self.gwidth[i]/2
+            yc = y0+self.gheight[i]/2
+            
+            #Convert to lat/lon
+            (clon[i], clat[i]) = self.pcp.transform_point(xc, yc, self.proj)
+            
+        #Return grid centers
+        return (clat, clon)
+            
+    ### Method for calculating grid extent
+    ### Inputs:
+    ###   gid=, integer, optional, grid ID number (outermost grid is grid number 1). Defaults to current grid.
+    ###
+    ### Outputs:
+    ###   (w, e, s, n), tuple of floats, grid extent in projection coordinates. Order is west, east, south, north.
+    def get_extent(self, gid=None):
+        #Set gid to default if required
+        if (gid == None):
+            gid = self.cg
+        
+        #Transform grid center into projection coordinates
+        (xc, yc) = self.proj.transform_point(self.clon[gid-1], self.clat[gid-1], self.pcp)
+        
+        #Return grid extent
+        return (xc-self.gwidth[gid-1]/2, xc+self.gwidth[gid-1]/2,
+            yc-self.gheight[gid-1]/2, yc+self.gheight[gid-1]/2)
+    
+    ### Method to plot landcover if requested
+    ### Inputs:
+    ###   ax, pyplot axis object, axis upon which to plot land cover
+    ###   gid, integer, optional, Outer most grid ID on plot.
+    def plot_landcover(self, ax, gid):
+        #Read in land cover data
+        lco = MCD12C1(self.lcfile)
+        landcover = lco.get("Majority_Land_Cover_Type_1")
+
+        #Colorbar to use for plotting
+        cmap = lco.lc1_cmap
+
+        #Data levels
+        levs = range(len(lco.lc1_legend)+1)
+
+        #Populate 2D location grids
+        (lon_grid, lat_grid) = numpy.meshgrid(lco.lons, lco.lats)
+        
+        #Convert lat/lons to projection coordinates
+        tgrid = self.proj.transform_points(self.pcp, lon_grid, lat_grid)
+        
+        #Split 3D tgrid into its constituents
+        x = tgrid[:,:,0]
+        y = tgrid[:,:,1]
+        
+        #Limit extent to model domain for faster plotting
+        mask1 = x < self.extent[gid-1][0]
+        mask2 = x > self.extent[gid-1][1]
+        mask3 = y < self.extent[gid-1][2]
+        mask4 = y > self.extent[gid-1][3]
+        mask = mask1 | mask2 | mask3 | mask4
+        x = numpy.ma.masked_array(x, mask=mask)
+        y = numpy.ma.masked_array(y, mask=mask)
+        landcover = numpy.ma.masked_array(landcover, mask=mask)
+
+        #Creating plot
+        cont = ax.contourf(x, y, landcover, transform=self.proj, cmap=cmap, levels=levs)
+
+        #Colorbar
+        ratio = x.shape[1]/x.shape[0]
+        cb = pp.colorbar(cont, ax=ax, ticks=range(len(lco.lc1_legend)), fraction=0.045*ratio, pad=0.04)
+        cb.ax.locator_params(nbins=len(lco.lc1_legend))
+        cb.ax.set_yticklabels(lco.lc1_legend, rotation=-30)
+        
+        #Clean up data object
+        del(lco)
+        
+        #Returning
+        return
+    
+    ### Methods for setting the WRF grid map projection
+    #Lambert Conformal projection
+    def lambert(self):
+    
+        return ccrs.LambertConformal(central_longitude=self.lon0, central_latitude=self.lat0,
+            standard_parallels=(self.slat1, self.slat2))
+        
+    #Lat/lon porjection
+    def latlon(self):
+    
+        print("WARNING: lat-lon option not finished. Use at own risk.")
+        return ccrs.PlateCarree()
+    
+    #Mercator projection
+    def mercator(self):
+    
+        return ccrs.Mercator(latitude_true_scale=self.slat1)
+    
+    #Polar Stereographic projection
+    def polar(self):
+    
+        return ccrs.NorthPolarStereo(central_longitude=self.slon1, true_scale_latitude=self.slat1)
+    
+    ### Method to cleanly destroy object
+    def __del__(self):
+        
+        #Clean up namelist object to free memory
+        try:
+            del(self.nml)
+        except:
+            pass
+            
+        #Returning
+        return
+        
+############################################################
+#---------------------     WRFANL     ---------------------#
+############################################################
+### The WRFANL class provides tools for visualizing WRF
+### model output. It rquires only the directory where the
+### output is stored. It provides tools for quick creation
+### of common products such as radar loops and provides file-level
+### access to all variables.
+### NOTE: This object only supports one data frame per file.
+###
+### Available Attributes:
+###
+###
+### Available Methods:
+class WRFANL:
+
+    ### Method to construct object
+    ### Inputs:
+    ###   wrfpath, string, path to WRF output files (with trailing slash)
+    def __init__(self, wrfpath):
+        
+        ### First locate all of the output files for each domain
+        #Find all files and sort them
+        all_files = sorted(glob.glob(wrfpath+"wrfout_*"))
+
+        #Determine number of domains
+        dfile = nc.Dataset(all_files[-1], "r")
+        self.ngrids = dfile.__dict__["GRID_ID"]
+        
+        #Seperate list of files into a list for each domain
+        self.files = [] #List to hold file lists for each domain
+        for gid in range(1, self.ngrids+1): #Loop over grids
+            dummy = [] #Dummy list to hold files for each domain
+            for f in all_files: #Loop over files
+                if (int(f[f.find("_d")+2:f.find("_d")+4]) == gid):
+                    dummy.append(f) #Store files in dummy list if the match domain
+            self.files.append(dummy) #Store domain list
+            
+        ### Determine model map information
+        #Create dictionary with possible projections
+        proj_list = {"Mercator":self.mercator, "Lambert Conformal":self.lambert,
+            "Polar Stereographic":self.polar, "Lat-Lon":self.latlon}
+        
+        #Pull basic map info
+        self.proj_name = dfile.__dict__["MAP_PROJ_CHAR"]
+        self.lat0 = dfile.__dict__["MOAD_CEN_LAT"]
+        self.lon0 = dfile.__dict__["STAND_LON"]
+        self.slat1 = dfile.__dict__["TRUELAT1"]
+        self.slat2 = dfile.__dict__["TRUELAT2"]   
+        self.proj = proj_list[self.proj_name]()
+        self.pcp = ccrs.PlateCarree()
+
+        #Pull simulation start and end times
+        self.tformat = "%Y-%m-%d_%H:%M:%S"
+        time = dfile.__dict__["SIMULATION_START_DATE"]
+        self.start_of_sim = dt.datetime.strptime(time, self.tformat)        
+        time = "".join(numpy.array(dfile.variables["Times"][0,:], dtype="str"))
+        self.end_of_sim = dt.datetime.strptime(time, self.tformat)
+        
+        ### Destroy now unnecessary dummy file object
+        dfile.close()
+                
+        #Set period of analysis to simulation period
+        self.start_of_anl = self.start_of_sim
+        self.end_of_anl = self.end_of_sim
+        
+        #Pull grid information for each domain
+        self.get_grids()
+        
+        ### Set the current working grid to grid 1 (the outermost grid)
+        self.cg = 1
+        
+        ### Returning
+        return
+    
+    ### Method to locate nearest point on the WRF grid given (lon, lat).
+    ### Note that the mass (i.e. unstaggered) grid coordinates are used.
+    ### Inputs:
+    ###   point, tuple of floats, (lon, lat)
+    ###   gid, optional, integer, grid to find point on, defautls to current grid
+    ###   gcoord, optional, boolean, flag to use grid coordinates (default) or array indices.
+    ###     array indices are grid coordinates minus one.
+    ### Outputs:
+    ###   (xind, yind), tuple of ints, grid coordinates of desired lon/lat
+    def get_point(self, point, gid=None, gcoord=True):
+        
+        #Set default grid if necessary
+        if (gid == None):
+            gid = self.cg
+            
+        #Convert points to grid coordinates (including grid center)
+        x, y = self.proj.transform_point(point[0], point[1], self.pcp)
+        cx, cy = self.proj.transform_point(self.clon[gid-1], self.clat[gid-1], self.pcp)
+        
+        #Calculate change in distance in grid points
+        dxind = int(round((cx-x)/self.dx[gid-1]))
+        dyind = int(round((cy-y)/self.dy[gid-1]))
+        
+        #Calculate desired point index using center indices
+        xind = int(self.nx[gid-1]/2+dxind)
+        yind = int(self.ny[gid-1]/2+dyind)
+        
+        #Check that points are still valid.
+        if ((xind < 1) or (yind < 1) or (xind > self.nx[gid-1]) or (yind > self.ny[gid-1])):
+            print("ERROR: Point outside grid extent. Exiting...")
+            exit()
+            
+        #Return point
+        if gcoord:
+            return (xind, yind)
+        else:
+            return (xind-1, yind-1)        
+    
+    ### Method to pull variables from the WRF simulation.
+    ### This method retrieves user-requested variables over a time-period
+    ### for the requested grid. It eliminates extraneous dimensions in the process.
+    ### Inputs:
+    ###   var_labels, list of strings, WRF variable names to retrieve.
+    ###   point, optional, tuple, (lon, lat) of point to retrieve variables for.
+    ###     Defaults to entire grid.
+    ###   gid, optional, integer, grid to retrieve variables for. Defaults to current grid.
+    ###   period, optional, tuple of datetime objects, (start, end) temporal bounds of plot.
+    ###     Defaults to current analysis period.
+    ###
+    ### Outputs:
+    ###   vars, dictionary of lists, contains arrays with WRF variables keyed to var_labels.
+    def get_var(self, var_labels, point=None, gid=None, period=None):
+    
+        #Set default grid if necessary
+        if (gid == None):
+            gid = self.cg
+            
+        #Determine time period to retreive variables over
+        if (period == None):
+            tstart = self.start_of_anl
+            tend = self.end_of_anl
+        else:
+            tstart = period[0]
+            tend = period[1]
+        
+        #Calulcate user point if given
+        if (point != None):
+            (xind, yind) = self.get_point(point, gid)
+        
+        #Create dictionary to store requested variables
+        vars = {"date":[]}
+        for vl in var_labels:
+            vars[vl] = []
+        
+        #Loop over WRF output files
+        for f in self.files[gid-1]:
+        
+            #Create netCDF object
+            fn = nc.Dataset(f, "r")
+            
+            #Pull date
+            date = "".join(numpy.array(fn.variables["Times"][0,:], dtype="str"))
+            date = dt.datetime.strptime(date, self.tformat)
+            
+            #Skip file if outside analysis period
+            if ((date < tstart) or
+                (date > tend)):
+                fn.close()
+                continue
+                
+            #Store date
+            vars["date"].append(date)
+            
+            #Grab other variables
+            for vl in var_labels:
+                try:
+                    if (point == None):
+                        vars[vl].append(numpy.squeeze(fn.variables[vl]))
+                    else: #Grab var at a point
+                        try: #2D case
+                            vars[vl].append(numpy.squeeze(fn.variables[vl][:,yind,xind]))
+                        except: #3D case
+                            vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,yind,xind]))
+                except:
+                    print("ERROR: {} is not found in file {}\nExiting...".format(vl, f))
+                    exit()
+    
+        #Convert lists to numpy arrays
+        for k in vars.keys():
+            vars[k] = numpy.array(vars[k])
+    
+        #Returning
+        return vars
+    
+    ### Method to retrieve WxChallenge forecast
+    ### Inputs:
+    ###   point, tuple of floats, (lon, lat) of forecast location
+    ###   gid, optional, integer, grid to analyze. Default is current grid.
+    ###   period, optional, tuple of datetime objects, (start, end) temporal bounds of plot.
+    ###     Defaults to current analysis period.
+    ### Outputs:
+    ###   tmax, float, forecasted maximum temperature [F]
+    ###   tmin, float, forecsated minimum temperature [F]
+    ###   wmax, float, forecasted maximum wind speed [kt]
+    ###   pacc, float, forecasted accumulated precipitation [inch]
+    def get_wxc(self, point, gid=None, period=None):
+    
+        #Set default grid if necessary
+        if (gid == None):
+            gid = self.cg
+            
+        #Determine time period of forecast
+        if (period == None):
+            tstart = self.start_of_anl
+            tend = self.end_of_anl
+        else:
+            tstart = period[0]
+            tend = period[1]
+    
+        #Retrieve forecast variables
+        var_names = ["T2", "U10", "V10", "RAINC", "RAINNC"]
+        data = self.get_var(var_names, point=point, period=period, gid=gid)
+    
+        #Convert temperature from Kelvin to Fahrenheit
+        temp = (data["T2"]-273.15)*9/5+32
+        
+        #Calculate total wind speed and convert to knots
+        wspd = numpy.sqrt(data["U10"]**2+data["V10"]**2)*1.94384
+        
+        #Calculate accumulated rainfall over analysis period and convert to inches
+        precip = ((data["RAINC"]+data["RAINNC"])-(data["RAINC"][0]+data["RAINNC"][0]))*0.0393701
+        
+        #Calculate forecast
+        tmax = round(temp.max(), 2)
+        tmin = round(temp.min(), 2)
+        wmax = round(wspd.max(), 2)
+        pacc = round(precip[-1], 2)
+        
+        #Returning
+        return [tmax, tmin, wmax, pacc]
+    
+    ### Method to plot meteogram from WRF simulation
+    ### Temperature, dewpoint, wind speed, and solar radiation are plotted for a single
+    ### point in a WRF simulation. By default, this is averaged over the whole domain.
+    ### If a point is provided by the user, that is used instead.
+    ### Inputs:
+    ###   spath, string, location (with trailing slash) to save meteogram.
+    ###   point, optional, tuple, (lon, lat) of point to be plotted. Default is average over domain.
+    ###   gid, optional, integer, grid to analyze. Default is current grid.
+    ###   period, optional, tuple of datetime objects, (start, end) temporal bounds of plot.
+    ###     Defaults to current analysis period.
+    def meteogram(self, spath, point=None, gid=None, period=None):
+    
+        #Set default grid if necessary
+        if (gid == None):
+            gid = self.cg
+            
+        #Determine time period of meteogram
+        if (period == None):
+            tstart = self.start_of_anl
+            tend = self.end_of_anl
+        else:
+            tstart = period[0]
+            tend = period[1]
+        
+        #Retrieve variables to plot
+        var_names = ["T2", "Q2", "U10", "V10", "SWDOWN", "PSFC", "RAINC", "RAINNC"]
+        data = self.get_var(var_names, point=point, period=period, gid=gid)
+        
+        #Average variables over domain
+        if (point == None):
+            for k in data.keys():
+                if (k == "date"): #Skip the date
+                    continue
+                
+                data[k] = numpy.mean(data[k], axis=(1,2))
+        
+        #Calculate dewpoint from water vapor mixing ratio and change to Fahrenheit
+        dewp = (at.dewpoint(at.wtoe(data["PSFC"], data["Q2"]))-273.15)*9/5+32
+        
+        #Convert temperature from Kelvin to Fahrenheit
+        temp = (data["T2"]-273.15)*9/5+32
+        
+        #Calculate total wind speed and convert to knots
+        wspd = numpy.sqrt(data["U10"]**2+data["V10"]**2)*1.94384
+        
+        #Calculate accumulated rainfall over analysis period and convert to inches
+        precip = ((data["RAINC"]+data["RAINNC"])-(data["RAINC"][0]+data["RAINNC"][0]))*0.0393701
+        
+        #Calculate ranges for each variable
+        tmin = numpy.floor(numpy.min(dewp)*0.9)
+        tmax = numpy.ceil(numpy.max(temp)*1.1)
+        wmin = numpy.floor(numpy.min(wspd)*0.9)
+        wmax = numpy.ceil(numpy.max(wspd)*1.1)
+        pmin = 0
+        pmax = max(numpy.ceil(numpy.max(precip)*1.1),2)
+        rmin = 0
+        rmax = numpy.ceil(numpy.max(data["SWDOWN"])*1.1)
+        
+        #Compute ticks for each variable
+        tticks = numpy.arange(tmin, tmax+4, 4)
+        wticks = numpy.arange(wmin, wmax+4, 4)
+        pticks = numpy.linspace(pmin, pmax, 11)
+        rticks = numpy.linspace(rmin, rmax, 11)        
+        
+        ### Plot the variables
+        #Create figure and axis objects
+        fig, ax = pp.subplots(nrows=4, ncols=1, figsize=(6,10))
+        
+        #Temperature and Dewpoint
+        ax[0].plot(data["date"], temp, color="red")
+        ax[0].plot(data["date"], dewp, color="green")
+        ax[0].set_ylabel("Temperature [K]", fontsize=14)
+        ax[0].legend(["Temperature", "Dewpoint"])
+        ax[0].tick_params(axis="x", rotation=30)
+        ax[0].set_ylim((tmin, tmax))
+        ax[0].set_yticks(tticks)
+        ax[0].grid()
+        
+        #Wind Speed
+        ax[1].plot(data["date"], wspd, color="black")
+        ax[1].set_ylabel("Wind Speed [kt]", fontsize=14)
+        ax[1].tick_params(axis="x", rotation=30)
+        ax[1].set_ylim((wmin, wmax))
+        ax[1].set_yticks(wticks)
+        ax[1].grid()
+        
+        #Precipitation
+        ax[2].plot(data["date"], precip, color="dodgerblue")
+        ax[2].set_ylabel("Accumulated Precip [inch]", fontsize=14)
+        ax[2].tick_params(axis="x", rotation=30)
+        ax[2].set_ylim((pmin, pmax))
+        ax[2].set_yticks(pticks)
+        ax[2].grid()
+        
+        #Solar radiation
+        ax[3].plot(data["date"], data["SWDOWN"], color="black")
+        ax[3].set_ylabel("Insolation [Wm$^{-2}$]", fontsize=14)
+        ax[3].tick_params(axis="x", rotation=30)
+        ax[3].set_ylim((rmin, rmax))
+        ax[3].set_yticks(rticks)
+        ax[3].grid()
+        
+        #Saving the figure
+        pp.tight_layout()
+        pp.savefig(spath+"meteogram_{}.png".format(data["date"][0].strftime("%Y%m%d")))
+        pp.close(fig)
+    
+        #Returning
+        return
+    
+    ### Method to create radar animation
+    ### Animates composite reflectivity from a single WRF domain.
+    ### Inputs:
+    ###   spath, string, Directory in which to save radar loop (both gif and pngs)
+    ###   gid, optional, integer, grid to create radar loop for.
+    ###     Defaults to current grid
+    ###   period, optional, tuple of datetime objects, (start, end) temporal bounds of animation.
+    ###     Defaults to current analysis period.
+    ###   point, optional, tuple of lon/lat (lon/lat) to highlight on map
+    def radar_loop(self, spath, gid=None, period=None, point=None):
+                
+        #Set default grid if necessary
+        if (gid == None):
+            gid = self.cg
+            
+        #Determine time period of radar loop
+        if (period == None):
+            tstart = self.start_of_anl
+            tend = self.end_of_anl
+        else:
+            tstart = period[0]
+            tend = period[1]
+        
+        #Crerate cartopy states feature object for plotting
+        states = cfeature.NaturalEarthFeature(category="cultural",
+            name="admin_1_states_provinces_lines",scale="110m", facecolor="none")
+        
+        #Plot each frame of the gif
+        for f in self.files[gid-1]:
+        
+            #Create netCDF object
+            fn = nc.Dataset(f, "r")
+            
+            #Pull date
+            date = "".join(numpy.array(fn.variables["Times"][0,:], dtype="str"))
+            date = dt.datetime.strptime(date, self.tformat)
+            
+            #Skip file if outside analysis period
+            if ((date < tstart) or
+                (date > tend)):
+                fn.close()
+                continue
+            
+            #Pull data
+            lats = numpy.squeeze(fn.variables["XLAT"])
+            lons = numpy.squeeze(fn.variables["XLONG"])
+            try:
+                refl = numpy.max(numpy.squeeze(fn.variables["REFL_10CM"]), axis=0)
+            except:
+                print("Reflectivity not found. Check WRF namelist for do_radar_ref=1\nExiting...")
+                exit()
+                            
+            ### Plot the data
+            #Create fig and axis objects
+            fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.proj})
+            
+            #Contour the reflectivity
+            cont =  ax.contourf(lons, lats, refl, cmap="gist_ncar", extend="min",
+                levels=numpy.linspace(5, 60, 12), transform=self.pcp)
+            cont.cmap.set_under("white")
+            cb = pp.colorbar(cont, orientation="horizontal")
+            cb.set_clim(5, 60)
+            cb.set_label("Composite Reflectivity [dBZ]", fontsize=14)
+            cb.set_ticks(numpy.linspace(5, 60, 12))
+            
+            #Add map features
+            ax.coastlines()
+            ax.add_feature(cfeature.BORDERS, edgecolor="grey")
+            ax.add_feature(states, edgecolor="gray")
+            if (point != None):
+                ax.scatter(point[0], point[1], transform=self.pcp, color="black")
+            
+            #Title the plot
+            ax.set_title(date.strftime("%Y-%m-%d   %H:%M:%S"), fontsize=16)
+            
+            #Save figure as png
+            pp.savefig(spath+"radar_{}.png".format(date.strftime("%Y-%m-%d_%H-%M-%S")))
+            pp.close(fig)
+            
+            #Close file
+            fn.close()
+            
+        ### Once all pngs are saved, make gif.
+        #Locate pngs just saved
+        pngs = sorted(glob.glob(spath+"radar_*.png"))
+        
+        #Store each frame
+        frames = []
+        for img in pngs:
+            frames.append(Image.open(img))
+            
+        #Make gif
+        frames[0].save(spath+"radar_loop.gif", format="GIF", append_images=frames[1:],
+            save_all=True, duration=500, loop=0)
+            
+        #Returning
+        return
+    
+    ### Method to set the current WRF grid being examined
+    ### Inputs:
+    ###   gid, integer, WRF grid ID to be set as current working grid
+    def set_cg(self, gid):
+    
+        #Check that new grid is not larger than number of grids in model
+        if (gid > self.ngrids): #Print warning and return without modifying curent grid
+            print("Grid {} non-existent. Max grid is: {}".format(gid, self.ngrids))
+            return
+        
+        #Set new current grid
+        self.cg = gid
+        
+        #Returning
+        return
+    
+    ### Method to set working time period
+    ### Inputs:
+    ###   tstart, datetime object, start of simulation period to be analyzed
+    ###   tend, datetime object, end of simulation period to be analyzed
+    def set_period(self, tstart, tend):
+        
+        #Check that times are within bounds of simulation
+        if ((tstart < self.start_of_sim) or (tstart > self.end_of_sim) or
+            (tend < self.start_of_sim) or (tend > self.end_of_sim)):
+            print("Requested period outside of simulation period. Exiting.")
+            exit()
+            
+        #Set new analysis bounds
+        self.start_of_anl = tstart
+        self.end_of_anl = tend
+    
+        #Returning
+        return
+    
+    #------ Methods below this line are primarily for internal use ------#
+    
+    ### Method for retreiving grid information for each domain
+    def get_grids(self):
+    
+        #Initializing arrays to store grid info
+        self.nx = numpy.zeros(self.ngrids, dtype="int")  #x-dim
+        self.nxs = numpy.zeros(self.ngrids, dtype="int") #staggered x-dim
+        self.ny = numpy.zeros(self.ngrids, dtype="int")  #y-dim
+        self.nys = numpy.zeros(self.ngrids, dtype="int") #staggered y-dim
+        self.nz = numpy.zeros(self.ngrids, dtype="int")  #z-dim
+        self.nzs = numpy.zeros(self.ngrids, dtype="int") #staggered z-dim
+        self.ns = numpy.zeros(self.ngrids, dtype="int")  #staggered soil layers
+        self.clat = numpy.zeros(self.ngrids, dtype="float")  #grid center lat
+        self.clon = numpy.zeros(self.ngrids, dtype="float")  #grid center lon
+        self.dx = numpy.zeros(self.ngrids, dtype="float")  #grid center lon
+        self.dy = numpy.zeros(self.ngrids, dtype="float")  #grid center lon
+        
+        #Use the last file as our template since that timestamp will have all grids
+        ftemplate = self.files[-1][-1]
+                
+        #Loop over each domain
+        for i in range(self.ngrids):
+            
+            #Open appropriate file to retrieve grid
+            fname = ftemplate[:ftemplate.find("_d")+2]+"{:02d}".format(i+1)+ftemplate[ftemplate.find("_d")+4:]
+            dfile = nc.Dataset(fname, "r")
+            
+            #Retrieve grid variables
+            self.nx[i] = dfile.dimensions["west_east"].size
+            self.nxs[i] = dfile.dimensions["west_east_stag"].size
+            self.ny[i] = dfile.dimensions["south_north"].size
+            self.nys[i] = dfile.dimensions["south_north_stag"].size
+            self.nz[i] = dfile.dimensions["bottom_top"].size
+            self.nzs[i] = dfile.dimensions["bottom_top_stag"].size
+            self.ns[i] = dfile.dimensions["soil_layers_stag"].size
+            self.clat[i] = dfile.__dict__["CEN_LAT"]
+            self.clon[i] = dfile.__dict__["CEN_LON"]
+            self.dx[i] = dfile.__dict__["DX"]
+            self.dy[i] = dfile.__dict__["DY"]
+            
+        #Returning
+        return
+     
+    ### Methods for setting the WRF grid map projection
+    #Lambert Conformal projection
+    def lambert(self):
+    
+        return ccrs.LambertConformal(central_longitude=self.lon0, central_latitude=self.lat0,
+            standard_parallels=(self.slat1, self.slat2))
+        
+    #Lat/lon porjection
+    def latlon(self):
+    
+        print("WARNING: lat-lon option not finished. Use at own risk.")
+        return ccrs.PlateCarree()
+    
+    #Mercator projection
+    def mercator(self):
+    
+        return ccrs.Mercator(latitude_true_scale=self.slat1)
+    
+    #Polar Stereographic projection
+    def polar(self):
+    
+        return ccrs.NorthPolarStereo(central_longitude=self.slon1, true_scale_latitude=self.slat1)

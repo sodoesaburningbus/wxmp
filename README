@@ -1,0 +1,6 @@
+WxMP is a python package for visualizing and manipulating numerical model
+data sets. WxMP stands for "Weather Modelling Package." For each data set, it provides Python
+objects for visualizing both the model grid and the data themselves.
+
+This package is written by Christopher Phillips and may be distributed freely, so long
+as this README remains unaltered.
