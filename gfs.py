@@ -56,7 +56,7 @@ class GFSANL:
         #Now store some basic grid info
         self.nx = self.grib[1].values.shape[1]
         self.ny = self.grib[1].values.shape[0]
-        self.res = (lat2-lat1)/self.ny
+        self.res = (lon2-lon1)/(self.nx-1)
         
         #Build up vectors for grid
         lats = numpy.linspace(lat1, lat2, self.ny)
@@ -65,28 +65,38 @@ class GFSANL:
         #Finally build and store 2D lat/lon arrays as attributes
         self.lons, self.lats = numpy.meshgrid(lons, lats)
         
+        #Set subsetting to off
+        self.disable_subset()
+        
+        #Attach projection information to object
+        self.proj_name = "Global Latitude/Longitude"
+        self.center_lon = (self.lons.min()+self.lons.max())/2
+        self.proj = ccrs.PlateCarree(central_longitude=self.center_lon)
+        self.pcp = ccrs.PlateCarree() #This is for transformations within the object
+        
         #Returning
         return
     
     ### Method to pull the data for a particular GRIB2 message by number
     ### Inputs:
     ###   mid, integer, number of desired GRIB2 message
-    ###   subset=, boolean array, optional, subset indices for data. Defaults to None.
     ### Outputs:
     ###   numpy array containing message values
-    def get_value(self, mid, subset=None):
-        if (mask != None):
-            return self.grib[mid].values[subset]
-        else:
-            return self.grib[mid].values
+    def get_value(self, mid):
+        
+        #Return selected values
+        return self.grib[mid].values[self.yind1:self.yind2, self.xind1:self.xind2]
         
     ### Method to retrieve messages by name and level
     ### Inputs: (either is optional, but at least one is required)
     ###   name=, string, optional, name of variable to retrieve
     ###   level=, integer, optional, level of variable to retrieve
+    ###   values=False, boolean, optional, if only one message whether to return the values
+    ###     instead of the full message. Defaults to False.
     ### Outputs:
     ###   messages, list of messages that match given criteria.
-    def get_messages(self, name=None, level=None):
+    def get_messages(self, name=None, level=None, values=False):
+        
         #First test that appropriate inputs are given
         if ((name == None) and (level == None)):
             print("ERROR: Must pass at one of name or level.")
@@ -95,24 +105,131 @@ class GFSANL:
             return self.grib.select(name=name)
         elif ((name == None) and (level != None)):
             return self.grib.select(level=level)
+        elif values:
+            return self.grib.select(name=name, level=level)[0].values[self.yind1:self.yind2, self.xind1:self.xind2]
         else:
             return self.grib.select(name=name, level=level)
             
+    
+    ### Method to disable sub-setting behavior (Off by default)
+    ### Doesn't truly disable sub-setting, just sets it to the full domain
+    def disable_subset(self):
+    
+        #Set subsetting to False
+        self.subset = False
+        
+        #Set analysis region to full GFS domain
+        self.extent = [self.lons.min(), self.lons.max(), self.lats.min(), self.lats.max()]
+        self.xind1 = 0
+        self.xind2 = self.nx
+        self.yind1 = 0
+        self.yind2 = self.ny
+        self.rlats = self.lats[:]
+        self.rlons = self.lons[:]
+        
+        #Returning
+        return
+    
     ### Method to subset data
     ### Generates a mask that can be applied to any variable in the GRIB file
     ### Inputs:
-    ###  extent, tuple of floats, (west lon, east lon, south lat, north lat)
+    ###  extent, list of floats, [west lon, east lon, south lat, north lat]
     ###
     ### Outputs,
     ###   subset, boolean array, subset indices corresponding to subsetted region.
     def get_subset(self, extent):
-        #Find areas that meet criteria
-        inds1 = self.slons > extent[0]
-        inds2 = self.slons < extent[1]
-        inds3 = self.lats > extent[2]
-        inds4 = self.lats < extent[3]
         
-        return inds1 & inds2 & inds3 & inds4
+        #First add 360 to any longitudes that are negative (b/c GFS goes from [0, 360])
+        if (extent[0] < 0):
+            extent[0] = extent[0] + 360
+        if (extent[1] < 0):
+            extent[1] = extent[1] + 360
+            
+        #Now verify that coordinates are in increasing order.
+        if (extent[0] > extent[1]): #Longitudes
+            dummy = extent[0]
+            extent[0] = extent[1]
+            extent[1] = dummy
+        if (extent[2] > extent[3]): #Latitudes
+            dummy = extent[2]
+            extent[2] = extent[3]
+            extent[3] = dummy
+                
+        #Calculate coordinates of each bounding side
+        lon1_ind = int((extent[0]-self.lons[0,0])/self.res)
+        lon2_ind = int((extent[1]-self.lons[0,0])/self.res)
+        lat1_ind = int((self.lats[0,0]-extent[3])/self.res) #Do north first because GFS stores north first.
+        lat2_ind = int((self.lats[0,0]-extent[2])/self.res)
+        
+        #Return indices (Lats firsts because arrays are ordered [lat, lon])
+        return (lat1_ind, lat2_ind, lon1_ind, lon2_ind)
+    
+    ### Method to plot analysis region
+    ### Inputs:
+    ###   spath=, string, optional, place to save plot. Displays if not given.
+    def plot_anl_region(self, spath=None):
+        
+        ### Plot subset region
+        #Create figure and axis objects
+        fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.proj})
+        
+        #Add continents
+        ax.coastlines()
+        ax.stock_img()
+                
+        #Set extent and make gridlines
+        gl = ax.gridlines(crs=self.pcp, draw_labels=False, linewidth=1, linestyle=":", color="grey")
+        if self.subset: #If subsetting is on
+            ax.set_extent(self.extent, crs=self.pcp)
+            gl.xlabels_bottom = True
+            gl.ylabels_left = True
+            gl.xformatter = cmg.LONGITUDE_FORMATTER
+            gl.yformatter = cmg.LATITUDE_FORMATTER
+            
+        else: #If no analysis region is set (i.e. working with full GFS domain)
+            #Format meridions
+            gl.xlocator = mticker.FixedLocator(numpy.linspace(-180, 180, 13))
+            ax.set_xticks(numpy.linspace(-150, 180, 12), crs=self.pcp)
+            ax.set_xticklabels(numpy.linspace(-150, 180, 12))
+            ax.xaxis.set_major_formatter(cticker.LongitudeFormatter())
+
+            #Format parallels
+            gl.ylocator = mticker.FixedLocator(numpy.linspace(-90, 90, 7))
+            ax.set_yticks(numpy.linspace(-90, 90, 7), crs=self.pcp)
+            ax.set_yticklabels(numpy.linspace(-90, 90, 7))
+            ax.yaxis.set_major_formatter(cticker.LatitudeFormatter())
+    
+        #Showing or saving plot
+        if (spath == None):
+            pp.show()
+        else:
+            pp.savefig(spath+"/gfs__analysis_domain.png")
+    
+        #Returning
+        return
+    
+    ### Method to set analysis region
+    ### All data is subset to this region if set
+    ### Inputs:
+    ###   extent, list of floats, [west lon, east lon, south lat, north lat]
+    def set_anl_region(self, extent):
+        
+        #First set subset flag to True. This turns on subsetting behavior for data functions.
+        self.subset = True
+        
+        #Now store the analysis extent
+        self.extent = extent
+        
+        #Now pull the necessary indices for subsetting
+        [self.yind1, self.yind2, self.xind1, self.xind2] = self.get_subset(extent)
+        
+        #Create lats and lats for analysis region
+        self.rlons = self.lons[self.yind1:self.yind2, self.xind1:self.xind2]
+        self.rlats = self.lats[self.yind1:self.yind2, self.xind1:self.xind2]
+        
+        #Returning
+        return
+        
     
     #------ Methods below this line are primarily for internal use ------#
     
