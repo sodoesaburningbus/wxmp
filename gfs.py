@@ -24,7 +24,7 @@ import pygrib
 #---------------------     GFSANL     ---------------------#
 ############################################################
 ### This class contains tools for reading GFS GRIB2 files
-### I enables the suer to pull variables easily, and plot
+### It enables the user to pull variables easily, and plot
 ### common products such as soundings, and meteograms.
 class GFSANL:
 

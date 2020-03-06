@@ -1,0 +1,113 @@
+This module contains classes for handling Weather Research and Forecasting model
+grids, inputs, and outputs.
+Written by Christopher Phillips
+University of Alabama in Huntsville
+Atmospheric and Earth Science Department
+
+Requirements:
+  Python 3+
+  Atmos (available at github.com/sodoesaburningbus)
+  Cartopy
+  f90NML
+  Matplotlib
+  NetCDF4
+  Numpy
+  PIL
+  PyMODIS (available at github.com/sodoesaburningbus)
+
+For examples of usage, see test_wrf.py
+
+
+############################################################
+#----------------------    WPSNL     ----------------------#
+############################################################
+The WPSNL class provides tools for creating the WPS
+namelist. It first reads in a template and allows the
+user to make changes. It can also generate a matching WRF
+namelist provided a template.
+
+Available Attributes:
+ nml - F90NML namelist object for WPS namelist
+
+Available Methods:
+ create_wrfnml(template_location, save_location) - Create WRF namelist based on WPS namelist
+ create_wpsnml(save_location) - Write out WPS namelist (call set_nml first)
+ set_nml(share={}, geogrid={}, ungrib={}, metgrid={}) - Change WPS namelist
+
+
+############################################################
+#--------------------     WRFgrid     ---------------------#
+############################################################
+The WRFgrid class provides tools for visualizing the WRF
+grid before the model is even run. It requires only a WPS
+namelist to provide the grid information.
+
+Available Attributes:
+ nml - f90nml namelist object
+ proj_name - Name of model grid projection
+ proj - Cartopy projection object for model grid
+ pcp - Cartopy PlateCarree projection object
+ lat0 - Domain center latitude
+ lon0 - Domain center longitude
+ slat1 - Standard parallel 1
+ slat2 - Standard parallel 2
+ slon1 - Standard longitude
+ clat - Center latitude of each grid
+ clon - Center longitude of each grid
+ extent - Bounds of each grid (in grid projection coordinates)
+ gwidth - Width of each grid (x span)
+ gheight - Height of each grid (y span)
+ cg - Current grid being handled
+ ngrids - Number of grids in domain
+ nx - Number of x points on each grid
+ ny - Number of y points on each grid
+ grid_ratio - Ratio of grid spacing between each grid and its parent
+ dx - x grid spacing on each grid
+ dy - y grid spacing on each grid
+ lcfile - File path of landcover dataset used in plotting
+
+Available Methods:
+ find_point(lon, lat) - Compute nearest grid location to a given lon/lat
+ plot_grid() - Plot grid and all interior grids
+ set_cg(gid) - Set current working grid
+ set_lcfile(filepath) - Set location of landcover data file used in plotting
+
+
+############################################################
+#---------------------     WRFANL     ---------------------#
+############################################################
+The WRFANL class provides tools for visualizing WRF
+model output. It rquires only the directory where the
+output is stored. It provides tools for quick creation
+of common products such as radar loops and provides file-level
+access to all variables.
+Further, it enables the setting of a working grid and analysis period
+to quickly subset data to desired period and domain.
+
+NOTE: This object only supports one data frame per file.
+
+Available Attributes:
+ ngrids - Number of grids in simulation
+ files - List of list of files, separated by grid
+ proj_name - Name of grid map projection
+ lat0 - Center latitude of simulation
+ lon0 - Center longitude of simulation
+ slat1 - Standard latitude 1 for map projection
+ slat2 - Standard latitude 2 for map projection
+ proj - Cartopy projection object for grid map projection
+ pcp - Cartopy PlateCarree projection object
+ tformat - Format of WRF output file times
+ start_of_sim - Datetime date object with simulation start time
+ end_of_sim - Datetime date object with simulation end time
+ start_of_anl - Datetime date object with start of analysis period
+ end_of_anl - Datetime date object with end of analysis period
+ cg - Current working grid
+
+Available Methods:
+ get_point((lon, lat)) - Returns grid coordinates of (lon, lat) pair
+ get_var(names) - Returns dictionary containing requested variables
+ get_wxc((lon, lat)) - Returns WxChallenge forecast for desired point
+ meteogram(save_location) - Plots a meteogram from simulation output
+ radar_loop(save_location) - Creates a radar loop (gif format)
+ set_cg(grid_number) - Set current working grid
+ set_period(tstart, tend) - Set beginning and end of analysis period

@@ -4,3 +4,17 @@ objects for visualizing both the model grid and the data themselves.
 
 This package is written by Christopher Phillips and may be distributed freely, so long
 as this README remains unaltered.
+
+Files included in package:
+Module files:
+ gfs.py - Contains classes to work with GFS data sets
+ wrf.py - Contains classes to work with the WRF model
+
+#Example files in the examples directory:
+ test_gfs.py - Runs some basic examples of the GFS classes
+ test_wrf.py - Runs some basic examples of the WRF classes
+
+#Supporting files:
+ README - This file
+ README_GFS - Documentation of GFS module
+ README_WRF - Documentation of WRF module

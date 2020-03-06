@@ -37,7 +37,14 @@ import sys
 ### namelist. It first reads in a template and allows the
 ### user to make changes. It can also generate a matching WRF
 ### namelist provided a template.
-
+###
+### Available Attributes:
+###  nml - F90NML namelist object for WPS namelist
+###
+### Available Methods:
+###  create_wrfnml(template_location, save_location) - Create WRF namelist based on WPS namelist
+###  create_wpsnml(save_location) - Write out WPS namelist (call set_nml first)
+###  set_nml(share={}, geogrid={}, ungrib={}, metgrid={}) - Change WPS namelist 
 class WPSNL:
 
     ### Method to construct object
@@ -59,13 +66,23 @@ class WPSNL:
         return
         
     ### Method to create WRF namelist from WPS namelist
-    ### Note that it does not change physics from the template
-    ### except for cumulus parameterization. For CU param,
-    ### grids with dx > 4km have parameterization turned on.
+    ### This method builds a namelist using the WPS settings
+    ### Users can override the defaults using optional dictionary inputs.
+    ### By default grids with dx > 4km have CU parameterization turned on.
     ### Inputs:
     ###   template, string, path to WRF namelist template
     ###   output, string, path to write new WRF namelist
-    def create_wrfnml(self, template, output):
+    ###   time_control, dictionary, optional, user-dseired changes to time_control section
+    ###     of namelist. Format are {"option_name":value}. Applies to inputs below too.
+    ###   domains, dictionary, optional, user-dseired changes to domains section
+    ###   physics, dictionary, optional, user-dseired changes to physics section
+    ###   fdda, dictionary, optional, user-dseired changes to fdda section
+    ###   dynamics, dictionary, optional, user-desired changes to dynamics section
+    ###   bdy_control, dictionary, optional, user-dseired changes to bdy_control section
+    ###   grib2, dictionary, optional, user-dseired changes to grib2 section
+    ###   namelist_quilt, dictionary, optional, user-dseired changes to namelist_quilt section
+    def create_wrfnml(self, template, output, time_control={}, domains={}, physics={},
+        fdda={}, dynamics={}, bdy_control={}, grib2={}, namelist_quilt={}):
     
         #Create WRF namelist object
         try:
@@ -121,6 +138,18 @@ class WPSNL:
                 cu.append(0)
         wrfnml["physics"]["cu_physics"] = cu #Set new CU parameterization
         
+        ### Write user-defined options
+        #Setup lists with namelist options
+        namelist_vars = [time_control, domains, physics, fdda, dynamics,
+            bdy_control, grib2, namelist_quilt]
+        namelist_names = ["time_control", "domains", "physics", "fdda", "dynamics",
+            "bdy_control","grib2", "namelist_quilt"]
+        
+        #Set new variables
+        for i in range(len(namelist_vars)):
+            for k in namelist_vars[i].keys():
+                wrfnml[namelist_names[i]][k] = namelist_vars[i][k]
+                    
         ### Write new WRF namelist
         wrfnml.write(output, force=True)
 
@@ -129,7 +158,18 @@ class WPSNL:
             
         #Returning
         return
+    
+    ### Method to write WPS namelist
+    ### Inputs:
+    ###  output, string, location to save new namelist
+    def create_wpsnml(self, output):
+    
+        #Write namelist
+        self.nml.write(output, force=True)
         
+        #Returning
+        return
+    
     ### Method to change WPS namelist
     ### Inputs:
     ###   share, dictionary, contains WPS namelist variables within the share group
@@ -138,6 +178,7 @@ class WPSNL:
     ###   ungrib, dictionary, contains WPS namelist variables within the ungrib group
     ###   metgrid, dictionary, contains WPS namelist variables within the metgrid group
     def set_nml(self, share={}, geogrid={}, ungrib={}, metgrid={}):
+        
         #Set new share variables
         for k in share.keys():
             self.nml["share"][k] = share[k]
@@ -209,34 +250,34 @@ class WPSNL:
 ### namelist to provide the grid information.
 ###
 ### Available Attributes:
-### nml - f90nml namelist object
-### proj_name - Name of model grid projection
-### proj - Cartopy projection object for model grid
-### pcp - Cartopy PlateCarree projection object
-### lat0 - Domain center latitude
-### lon0 - Domain center longitude
-### slat1 - Standard parallel 1
-### slat2 - Standard parallel 2
-### slon1 - Standard longitude
-### clat - Center latitude of each grid
-### clon - Center longitude of each grid
-### extent - Bounds of each grid (in grid projection coordinates)
-### gwidth - Width of each grid (x span)
-### gheight - Height of each grid (y span)
-### cg - Current grid being handled
-### ngrids - Number of grids in domain
-### nx - Number of x points on each grid
-### ny - Number of y points on each grid
-### grid_ratio - Ratio of grid spacing between each grid and its parent
-### dx - x grid spacing on each grid
-### dy - y grid spacing on each grid
-### lcfile - File path of landcover dataset used in plotting
+###  nml - f90nml namelist object
+###  proj_name - Name of model grid projection
+###  proj - Cartopy projection object for model grid
+###  pcp - Cartopy PlateCarree projection object
+###  lat0 - Domain center latitude
+###  lon0 - Domain center longitude
+###  slat1 - Standard parallel 1
+###  slat2 - Standard parallel 2
+###  slon1 - Standard longitude
+###  clat - Center latitude of each grid
+###  clon - Center longitude of each grid
+###  extent - Bounds of each grid (in grid projection coordinates)
+###  gwidth - Width of each grid (x span)
+###  gheight - Height of each grid (y span)
+###  cg - Current grid being handled
+###  ngrids - Number of grids in domain
+###  nx - Number of x points on each grid
+###  ny - Number of y points on each grid
+###  grid_ratio - Ratio of grid spacing between each grid and its parent
+###  dx - x grid spacing on each grid
+###  dy - y grid spacing on each grid
+###  lcfile - File path of landcover dataset used in plotting
 ###
 ### Available Methods:
-### find_point(lon, lat) - Compute nearest grid location to a given lon/lat
-### plot_grid() - Plot grid and all interior grids
-### set_cg(gid) - Set current working grid
-### set_lcfile(filepath) - Set location of landcover data file used in plotting
+###  find_point(lon, lat) - Compute nearest grid location to a given lon/lat
+###  plot_grid() - Plot grid and all interior grids
+###  set_cg(gid) - Set current working grid
+###  set_lcfile(filepath) - Set location of landcover data file used in plotting
 
 class WRFgrid:
     ### Method to construct object
@@ -580,12 +621,36 @@ class WRFgrid:
 ### output is stored. It provides tools for quick creation
 ### of common products such as radar loops and provides file-level
 ### access to all variables.
+### Further, it enables the setting of a working grid and analysis period
+### to quickly subset data to desired period and domain.
+###
 ### NOTE: This object only supports one data frame per file.
 ###
 ### Available Attributes:
-###
+###  ngrids - Number of grids in simulation
+###  files - List of list of files, separated by grid
+###  proj_name - Name of grid map projection
+###  lat0 - Center latitude of simulation
+###  lon0 - Center longitude of simulation
+###  slat1 - Standard latitude 1 for map projection
+###  slat2 - Standard latitude 2 for map projection
+###  proj - Cartopy projection object for grid map projection
+###  pcp - Cartopy PlateCarree projection object
+###  tformat - Format of WRF output file times
+###  start_of_sim - Datetime date object with simulation start time
+###  end_of_sim - Datetime date object with simulation end time
+###  start_of_anl - Datetime date object with start of analysis period
+###  end_of_anl - Datetime date object with end of analysis period
+###  cg - Current working grid
 ###
 ### Available Methods:
+###  get_point((lon, lat)) - Returns grid coordinates of (lon, lat) pair
+###  get_var(names) - Returns dictionary containing requested variables
+###  get_wxc((lon, lat)) - Returns WxChallenge forecast for desired point
+###  meteogram(save_location) - Plots a meteogram from simulation output
+###  radar_loop(save_location) - Creates a radar loop (gif format)
+###  set_cg(grid_number) - Set current working grid
+###  set_period(tstart, tend) - Set beginning and end of analysis period
 class WRFANL:
 
     ### Method to construct object
