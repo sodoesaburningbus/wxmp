@@ -285,12 +285,13 @@ class WRFANL:
 
     ### Method to construct object
     ### Inputs:
-    ###   wrfpath, string, path to WRF output files (with trailing slash)
-    def __init__(self, wrfpath):
+    ###  wrfpath, string, path to WRF output files
+    ###  wrfpre, string, optional, prefix to WRF files, defaults to "wrfout_"
+    def __init__(self, wrfpath, wrfpre="wrfout_"):
         
         ### First locate all of the output files for each domain
         #Find all files and sort them
-        all_files = sorted(glob.glob(wrfpath+"wrfout_*"))
+        all_files = sorted(glob.glob(wrfpath+"/{}*".format(wrfpre)))
 
         #Determine number of domains
         dfile = nc.Dataset(all_files[-1], "r")
@@ -377,8 +378,8 @@ class WRFANL:
         cx, cy = self.proj.transform_point(self.clon[gid-1], self.clat[gid-1], self.pcp)
         
         #Calculate change in distance in grid points
-        dxind = int(round((cx-x)/self.dx[gid-1]))
-        dyind = int(round((cy-y)/self.dy[gid-1]))
+        dxind = int(round((x-cx)/self.dx[gid-1]))
+        dyind = int(round((y-cy)/self.dy[gid-1]))
         
         #Calculate desired point index using center indices
         xind = int(self.nx[gid-1]/2+dxind)
@@ -407,7 +408,7 @@ class WRFANL:
     ###     Defaults to current analysis period.
     ###
     ### Outputs:
-    ###   vars, dictionary of lists, contains arrays with WRF variables keyed to var_labels.
+    ###   vars, dictionary of lists, contains arrays with WRF variables keyed to var_labels (Final array order is (Time, Z, Y, X).
     def get_var(self, var_labels, point=None, gid=None, period=None):
     
         #Set default grid if necessary
@@ -456,9 +457,9 @@ class WRFANL:
                     for vl in var_labels: #Loop over each variable
                             if (point == None): #Grab variable over region
                                 try: #2D case
-                                    vars[vl].append(numpy.squeeze(fn.variables[vl][:,yind1:yind2,xind1:xind2]))
+                                    vars[vl].append(numpy.squeeze(fn.variables[vl][:,self.yind1:self.yind2,self.xind1:self.xind2]))
                                 except: #3D case
-                                    vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,yind1:yind2,xind1:xind2]))
+                                    vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,self.yind1:self.yind2,self.xind1:self.xind2]))
                             else: #Grab var at a point
                                 try: #2D case
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,yind,xind]))
@@ -474,9 +475,14 @@ class WRFANL:
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,yind,xind]))
                                 except: #3D case
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,yind,xind]))
-            except:
-                print("ERROR: {} is not found in file {}\nExiting...".format(vl, f))
-                exit()
+            
+            except Exception as err:
+                fn.close()
+                print(err)
+                raise Exception
+    
+            #Close file
+            fn.close()
     
         #Convert lists to numpy arrays
         for k in vars.keys():
@@ -753,14 +759,14 @@ class WRFANL:
         self.anl_extent = extent
         
         #Calculate indices of analysis region (uses nearest point to boundary)
-        self.xind1, self.yind1 = self.find_point(extent[0], extent[2])
-        self.xind2, self.yind2 = self.find_point(extent[1], extent[3])
-                
+        self.xind1, self.yind1 = self.get_point((extent[0], extent[2]), gcoord=False)
+        self.xind2, self.yind2 = self.get_point((extent[1], extent[3]), gcoord=False)
+                        
         #Create lats and lats for analysis region
-        lonlats = self.get_vars(["XLONG", "XLAT"])
-        self.rlons = lonlats["XLONG"]
-        self.rlats = lonlats["XLAT"]
-                
+        lonlats = self.get_var(["XLONG", "XLAT"])
+        self.rlons = lonlats["XLONG"][0]
+        self.rlats = lonlats["XLAT"][0]
+                        
         #Returning
         return
     
