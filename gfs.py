@@ -15,6 +15,7 @@
 import cartopy.crs as ccrs
 import cartopy.mpl.gridliner as cmg
 import cartopy.mpl.ticker as cticker
+import glob
 import matplotlib.pyplot as pp
 import matplotlib.ticker as mticker
 import numpy
@@ -30,32 +31,33 @@ class GFSANL:
 
     ### Method to construct GFS analysis object
     ### Inputs:
-    ###   filepath, string, full path to GFS file
-    def __init__(self, filepath):
+    ###  gfspath, string, full path to directory containing GFS files
+    ###  gfspre, string, optional, prefix to GFS files, defaults to none
+    def __init__(self, gfspath, gfspre=""):
     
-        #First store some basic attributes about the file
-        self.name = filepath           #Full path of file
-        self.date = filepath[-20:-10]  #Timestamp on file (YYYYMMDDHH)
-                
-        #Now open the file
-        self.grib = pygrib.open(filepath) #Store GRIB2 file object as attribute
-        
-        #Extract message table
+        ### First locate all files
+        self.files = sorted(glob.glob(gfspath+"/{}*".format(gfspre)))
+                        
+        #Extract message table from first file
+        grib = pygrib.open(self.files[0])
         string = ""
-        for m in self.grib[0:]:
+        for m in grib[0:]:
             string = "{}{}\n".format(string,m)
         self.mtable = string
         
         ### Go ahead and pull the lat/lon grid and convert to 2D grid
         #Exctract first and last points
-        lat1 = self.grib[1].latitudeOfFirstGridPointInDegrees
-        lon1 = self.grib[1].longitudeOfFirstGridPointInDegrees
-        lat2 = self.grib[1].latitudeOfLastGridPointInDegrees
-        lon2 = self.grib[1].longitudeOfLastGridPointInDegrees
+        lat1 = grib[1].latitudeOfFirstGridPointInDegrees
+        lon1 = grib[1].longitudeOfFirstGridPointInDegrees
+        lat2 = grib[1].latitudeOfLastGridPointInDegrees
+        lon2 = grib[1].longitudeOfLastGridPointInDegrees
+        
+        #Get start time of dataset
+        self.start_of_sim = grib[1].validDate
         
         #Now store some basic grid info
-        self.nx = self.grib[1].values.shape[1]
-        self.ny = self.grib[1].values.shape[0]
+        self.nx = grib[1].values.shape[1]
+        self.ny = grib[1].values.shape[0]
         self.res = (lon2-lon1)/(self.nx-1)
         
         #Build up vectors for grid
@@ -74,42 +76,35 @@ class GFSANL:
         self.proj = ccrs.PlateCarree(central_longitude=self.center_lon)
         self.pcp = ccrs.PlateCarree() #This is for transformations within the object
         
+        ### Build dictionary of variables and levels keyed to type of level
+        #Find all types of levels and initialize dictionaries of lists with those keys         
+        self.type_of_level_list = list(dict.fromkeys(list(m.typeOfLevel for m in grib[0:])))
+        self.var_list = {}
+        self.level_list = {}
+        for tl in self.type_of_level_list:
+            self.var_list[tl] = []
+            self.level_list[tl] = []
+            
+        #Now fill those lists by level type (no duplicates)  
+        for m in grib[0:]:
+            if m.name not in self.var_list[m.typeOfLevel]:
+                self.var_list[m.typeOfLevel].append(m.name)
+            if m.level not in self.level_list[m.typeOfLevel]:
+                self.level_list[m.typeOfLevel].append(m.level)
+                    
+        #Close grib file
+        grib.close()
+        
+        #Get end time of dataset
+        grib = pygrib.open(self.files[-1])
+        self.end_of_sim = grib[1].validDate
+        grib.close()
+        
+        #Set period of analysis to simulation period
+        self.set_anl_period(self.start_of_sim, self.end_of_sim)
+        
         #Returning
         return
-    
-    ### Method to pull the data for a particular GRIB2 message by number
-    ### Inputs:
-    ###   mid, integer, number of desired GRIB2 message
-    ### Outputs:
-    ###   numpy array containing message values
-    def get_value(self, mid):
-        
-        #Return selected values
-        return self.grib[mid].values[self.yind1:self.yind2, self.xind1:self.xind2]
-        
-    ### Method to retrieve messages by name and level
-    ### Inputs: (either is optional, but at least one is required)
-    ###   name=, string, optional, name of variable to retrieve
-    ###   level=, integer, optional, level of variable to retrieve
-    ###   values=False, boolean, optional, if only one message whether to return the values
-    ###     instead of the full message. Defaults to False.
-    ### Outputs:
-    ###   messages, list of messages that match given criteria.
-    def get_messages(self, name=None, level=None, values=False):
-        
-        #First test that appropriate inputs are given
-        if ((name == None) and (level == None)):
-            print("ERROR: Must pass at one of name or level.")
-            raise ValueError("Must pass at least name or level.")
-        elif ((name != None) and (level == None)):
-            return self.grib.select(name=name)
-        elif ((name == None) and (level != None)):
-            return self.grib.select(level=level)
-        elif values:
-            return self.grib.select(name=name, level=level)[0].values[self.yind1:self.yind2, self.xind1:self.xind2]
-        else:
-            return self.grib.select(name=name, level=level)
-            
     
     ### Method to disable sub-setting behavior (Off by default)
     ### Doesn't truly disable sub-setting, just sets it to the full domain
@@ -129,6 +124,83 @@ class GFSANL:
         
         #Returning
         return
+    
+    ### Method to pull the data for a particular GRIB2 message by number
+    ### Inputs:
+    ###   mid, integer, number of desired GRIB2 message
+    ###   period, tuple of date objects, optional, start and end times of desired analysis
+    ### Outputs:
+    ###   numpy array containing values indexed as (Time, Y, X)
+    def get_message(self, mid, period=None):
+        
+        #Determine time period to retreive variables over
+        if (period == None):
+            tstart = self.start_of_anl
+            tend = self.end_of_anl
+        else:
+            tstart = period[0]
+            tend = period[1]
+        
+        #Loop over each file
+        vars = []
+        for f in self.files:
+            #Open grib file
+            grib = pygrib.open(f)
+            
+            #Grab file date
+            date = grib[1].validDate
+            
+            #Skip file if outside analysis period
+            if ((date < tstart) or (date > tend)):
+                grib.close()
+                continue
+            
+            #Grab variable and close file
+            vars.append(grib[mid].values[self.yind1:self.yind2, self.xind1:self.xind2])
+            grib.close()
+            
+        #Return values as numpy array
+        return numpy.array(vars)
+    
+
+    ### Method to retrieve closest grid point to desired location
+    ### Inputs:
+    ###   lon, float or list of floats, longitude of desired point
+    ###   lat, float or list of floats, latitude of desired point
+    ###
+    ### Outputs:
+    ###   (xi, yj), tuple of ints or list of ints, index of grid point closest to given point
+    ###     xi corresponds to lon; yj corresponds to lat.
+    def get_point(self, lon, lat):
+        #Force lon and lats into lists.
+        #This enables program consistency and user convenience.
+        if not isinstance(lon, list):
+            lon = [lon]
+            lat = [lat]
+
+        #Lists to grid points closest to user points
+        xi = []
+        yj = []
+
+        #Now for each lon/lat pair find the closest domain point.
+        for (ulon, ulat) in zip(lon, lat):
+            #Transform point to GFS projection
+            (x, y) = self.proj.transform_point(ulon, ulat, self.pcp)
+
+            #Check that desired location is within model grid
+            if ((x < self.extent[0]) or (x > self.extent[1]) or (y < self.extent[2]) or (y > self.extent[3])):
+                print("Point Lon: {}, Lat: {}) is outside the model grid. Returning...".format(ulon,ulat))
+                return None
+
+            #Calculate index of each point
+            xi.append(int(round((x-self.extent[0])/self.dx)))
+            yj.append(int(round((self.extent[3]-y)/self.dy)))
+
+        #Return indices to user (only return lists if user gave list)
+        if (len(xi) > 1):
+            return (xi, yj)
+        else:
+            return (xi[0], yj[0])
     
     ### Method to subset data
     ### Generates a mask that can be applied to any variable in the GRIB file
@@ -164,6 +236,58 @@ class GFSANL:
         #Return indices (Lats firsts because arrays are ordered [lat, lon])
         return (lat1_ind, lat2_ind, lon1_ind, lon2_ind)
     
+    ### Method to retrieve messages by name and level
+    ### Inputs: (either is optional, but at least one is required)
+    ###   name=, string, optional, name of variable to retrieve
+    ###   level=, integer, optional, level of variable to retrieve
+    ###   values=False, boolean, optional, if only one message whether to return the values
+    ###     instead of the full message. Defaults to False.
+    ###   period, tuple of date objects, optional, start and end times of desired analysis
+    ### Outputs:
+    ###   vars, array of messages that match given criteria for each file in dataset. First index is Time.
+    def get_var(self, name=None, level=None, values=False, period=None, **kwords):
+        
+        #Determine time period to retreive variables over
+        if (period == None):
+            tstart = self.start_of_anl
+            tend = self.end_of_anl
+        else:
+            tstart = period[0]
+            tend = period[1]
+        
+        #Loop over each file in GFS dataset
+        vars = []
+        for f in self.files:
+            #Open file
+            grib = pygrib.open(f)
+            
+            #Grab file date
+            date = grib[1].validDate
+            
+            #Skip file if outside analysis period
+            if ((date < tstart) or (date > tend)):
+                grib.close()
+                continue
+        
+            #First test that appropriate inputs are given
+            if ((name == None) and (level == None)): #No name or level
+                print("ERROR: Must pass at one of name or level.")
+                raise ValueError("Must pass at least name or level.")
+            elif ((name != None) and (level == None)): #Only name
+                vars.append(grib.select(name=name, **kwords))
+            elif ((name == None) and (level != None)): #Only level
+                vars.append(grib.select(level=level, **kwords))
+            elif values: #Name, level, and requesting values only
+                vars.append(grib.select(name=name, level=level, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
+            else: #Name and level but returning the messages themselves
+                vars.append(grib.select(name=name, level=level, **kwords))
+                
+            #Close file
+            grib.close()
+            
+        #Return data
+        return numpy.array(vars)
+                    
     ### Method to plot analysis region
     ### Inputs:
     ###   spath=, string, optional, place to save plot. Displays if not given.
@@ -208,6 +332,25 @@ class GFSANL:
         #Returning
         return
     
+    ### Method to set working time period
+    ### Inputs:
+    ###   tstart, datetime object, start of simulation period to be analyzed
+    ###   tend, datetime object, end of simulation period to be analyzed
+    def set_anl_period(self, tstart, tend):
+                
+        #Check that times are within bounds of simulation
+        if ((tstart < self.start_of_sim) or (tstart > self.end_of_sim) or
+            (tend < self.start_of_sim) or (tend > self.end_of_sim)):
+            print("Requested period outside of simulation period. Exiting.")
+            exit()
+            
+        #Set new analysis bounds
+        self.start_of_anl = tstart
+        self.end_of_anl = tend
+    
+        #Returning
+        return
+    
     ### Method to set analysis region
     ### All data is subset to this region if set
     ### Inputs:
@@ -231,15 +374,6 @@ class GFSANL:
         return
         
     
-    #------ Methods below this line are primarily for internal use ------#
-    
-    ### Method to close file on object destruction
-    def __del__(self):
-        try:
-            self.grib.close()
-        except:
-            pass
-
 #############################################################
 #---------------------     GFSgrid     ---------------------#
 #############################################################
@@ -364,7 +498,7 @@ class GFSgrid:
     ### Outputs:
     ###   (xi, yj), tuple of ints or list of ints, index of grid point closest to given point
     ###     xi corresponds to lon; yj corresponds to lat.
-    def find_point(self, lon, lat):
+    def get_point(self, lon, lat):
         #Force lon and lats into lists.
         #This enables program consistency and user convenience.
         if not isinstance(lon, list):

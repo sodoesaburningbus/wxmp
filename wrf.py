@@ -327,12 +327,43 @@ class WRFANL:
         time = "".join(numpy.array(dfile.variables["Times"][0,:], dtype="str"))
         self.end_of_sim = dt.datetime.strptime(time, self.tformat)
         
+        ### Construct list of available variables
+        #Loop across all variables, pulling the 3D fields' level types
+        self.type_of_level_list = []
+        for k in dfile.variables.keys():
+            if ((len(dfile.variables[k].dimensions) == 4) and
+                (dfile.variables[k].dimensions[1] not in self.type_of_level_list)):
+                self.type_of_level_list.append(dfile.variables[k].dimensions[1])
+        
+        #Add a level type for 1D and 2D vars
+        self.type_of_level_list.append("1D")
+        self.type_of_level_list.append("2D")
+        
+        
+        #Now create dictionaries with lists for the variables
+        self.var_list = {}
+        self.level_list = {}
+        for tl in self.type_of_level_list:
+            self.var_list[tl] = []
+            self.level_list[tl] = []
+                    
+        #Now populate variable and level list by level type
+        for k in dfile.variables.keys():
+            if (len(dfile.variables[k].dimensions) == 4):
+                self.var_list[dfile.variables[k].dimensions[1]].append(dfile.variables[k].name)
+                self.level_list[dfile.variables[k].dimensions[1]].append(numpy.arange(0,dfile.variables[k].shape[1]))
+            elif (len(dfile.variables[k].dimensions) == 3):
+                self.var_list["2D"].append(dfile.variables[k].name)
+                self.level_list["2D"].append(1)
+            else:
+                self.var_list["1D"].append(dfile.variables[k].name)
+                self.level_list["1D"].append(1)
+        
         ### Destroy now unnecessary dummy file object
         dfile.close()
                 
         #Set period of analysis to simulation period
-        self.start_of_anl = self.start_of_sim
-        self.end_of_anl = self.end_of_sim
+        self.set_anl_period(self.start_of_sim, self.end_of_sim)
         
         #Pull grid information for each domain
         self.get_grids()
@@ -406,10 +437,13 @@ class WRFANL:
     ###   gid, optional, integer, grid to retrieve variables for. Defaults to current grid.
     ###   period, optional, tuple of datetime objects, (start, end) temporal bounds of plot.
     ###     Defaults to current analysis period.
+    ###   level, integer, optional, model level to pull (First level is zero). Defaults to all.
+    ###   filedate, datetime object, optional, date of file to read in (for single files only)
     ###
     ### Outputs:
     ###   vars, dictionary of lists, contains arrays with WRF variables keyed to var_labels (Final array order is (Time, Z, Y, X).
-    def get_var(self, var_labels, point=None, gid=None, period=None):
+    ###     of if specific level requested, order is (Time, Y, X).
+    def get_var(self, var_labels, point=None, gid=None, period=None, level=None, filedate=None):
     
         #Set default grid if necessary
         if (gid == None):
@@ -443,8 +477,7 @@ class WRFANL:
             date = dt.datetime.strptime(date, self.tformat)
             
             #Skip file if outside analysis period
-            if ((date < tstart) or
-                (date > tend)):
+            if (((date < tstart) or (date > tend)) and (filedate == None)):
                 fn.close()
                 continue
                 
@@ -487,6 +520,10 @@ class WRFANL:
         #Convert lists to numpy arrays
         for k in vars.keys():
             vars[k] = numpy.array(vars[k])
+            
+        #Pull only one vertical level if requested
+        if (level != None):
+            vars = numpy.squeeze(vars[:,level,:,:])
     
         #Returning
         return vars
@@ -537,6 +574,14 @@ class WRFANL:
         
         #Returning
         return [tmax, tmin, wmax, pacc]
+    
+    ### Method to contour variable at specific model level and time
+    ### Inputs:
+    ###  var, string, name of variable to map
+    ###  level, integer, WRF level to plot variable on
+    ###  date, datetime object, date of file to to plot
+    def map_var(varname, level, date):
+        
     
     ### Method to plot meteogram from WRF simulation
     ### Temperature, dewpoint, wind speed, and solar radiation are plotted for a single
@@ -746,6 +791,25 @@ class WRFANL:
         #Returning
         return
     
+    ### Method to set working time period
+    ### Inputs:
+    ###   tstart, datetime object, start of simulation period to be analyzed
+    ###   tend, datetime object, end of simulation period to be analyzed
+    def set_anl_period(self, tstart, tend):
+        
+        #Check that times are within bounds of simulation
+        if ((tstart < self.start_of_sim) or (tstart > self.end_of_sim) or
+            (tend < self.start_of_sim) or (tend > self.end_of_sim)):
+            print("Requested period outside of simulation period. Exiting.")
+            exit()
+            
+        #Set new analysis bounds
+        self.start_of_anl = tstart
+        self.end_of_anl = tend
+    
+        #Returning
+        return
+    
     ### Method to set analysis region
     ### All data is subset to this region if set
     ### Inputs:
@@ -793,26 +857,7 @@ class WRFANL:
         
         #Returning
         return
-    
-    ### Method to set working time period
-    ### Inputs:
-    ###   tstart, datetime object, start of simulation period to be analyzed
-    ###   tend, datetime object, end of simulation period to be analyzed
-    def set_period(self, tstart, tend):
         
-        #Check that times are within bounds of simulation
-        if ((tstart < self.start_of_sim) or (tstart > self.end_of_sim) or
-            (tend < self.start_of_sim) or (tend > self.end_of_sim)):
-            print("Requested period outside of simulation period. Exiting.")
-            exit()
-            
-        #Set new analysis bounds
-        self.start_of_anl = tstart
-        self.end_of_anl = tend
-    
-        #Returning
-        return
-    
     #------ Methods below this line are primarily for internal use ------#
     
     ### Method for retreiving grid information for each domain
