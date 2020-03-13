@@ -344,15 +344,21 @@ class GFSANL:
     
     ### Method to plot analysis region
     ### Inputs:
-    ###   spath=, string, optional, place to save plot. Displays if not given.
-    def plot_anl_region(self, spath=None):
+    ###   gid=, integer, optional, GFS grid to plot. Defaults to 1. There is only 1.
+    ###   lc=, boolean, optional, Flag to include land cover imagery. Defaults to False.
+    ###   points=, list of tuples, optional, tuples of lon/lat pairs.
+    ###
+    ### Outputs:
+    ###   (fig, ax) tuple with pyplot figure and axis object.
+    def plot_grid(self, gid=1, lc=False, points=[]):
         
         ### Plot subset region
         #Create figure and axis objects
         fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.proj})
         
-        #Add continents
+        #Add continents and states
         ax.coastlines()
+        ax.add_feature(self.states)
         ax.stock_img()
                 
         #Set extent and make gridlines
@@ -376,16 +382,10 @@ class GFSANL:
             ax.set_yticks(numpy.linspace(-90, 90, 7), crs=self.pcp)
             ax.set_yticklabels(numpy.linspace(-90, 90, 7))
             ax.yaxis.set_major_formatter(cticker.LatitudeFormatter())
-    
-        #Showing or saving plot
-        if (spath == None):
-            pp.show()
-        else:
-            pp.savefig(spath+"/gfs__analysis_domain.png")
-    
+        
         #Returning
-        return
-    
+        return (fig, ax)
+            
     ### Method to set working time period
     ### Inputs:
     ###   tstart, datetime object, start of simulation period to be analyzed

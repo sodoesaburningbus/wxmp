@@ -185,7 +185,20 @@ class wxmpi:
             print("Warning: Not all models support this option. Actual error below.")
             print(err)
             raise Exception
-           
+    
+    ### Method to plot current analysis grid
+    ### Inputs:
+    ###   gid=, integer, optional, GFS grid to plot. Defaults to 1. There is only 1.
+    ###   lc=, boolean, optional, Flag to include land cover imagery. Defaults to False.
+    ###   points=, list of tuples, optional, tuples of lon/lat pairs.
+    ###
+    ### Outputs:
+    ###   (fig, ax) tuple with pyplot figure and axis object.
+    def plot_grid(self, gid=1, lc=False, points=[]):
+        
+        #Call model method
+        return self.dataset.plot_grid(gid=gid, lc=lc, points=points)
+    
     ### Method to set working time period
     ### Inputs:
     ###   tstart, datetime object, start of simulation period to be analyzed

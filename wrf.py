@@ -659,12 +659,14 @@ class WRFANL:
     ### point in a WRF simulation. By default, this is averaged over the whole domain.
     ### If a point is provided by the user, that is used instead.
     ### Inputs:
-    ###   spath, string, location (with trailing slash) to save meteogram.
     ###   point, optional, tuple, (lon, lat) of point to be plotted. Default is average over domain.
     ###   gid, optional, integer, grid to analyze. Default is current grid.
     ###   period, optional, tuple of datetime objects, (start, end) temporal bounds of plot.
     ###     Defaults to current analysis period.
-    def meteogram(self, spath, point=None, gid=None, period=None):
+    ###
+    ### Outputs:
+    ###   (fig, ax) tuple with pyplot figure and axis object.
+    def meteogram(self, point=None, gid=None, period=None):
     
         #Set default grid if necessary
         if (gid == None):
@@ -756,13 +758,39 @@ class WRFANL:
         ax[3].set_yticks(rticks)
         ax[3].grid()
         
-        #Saving the figure
-        pp.tight_layout()
-        pp.savefig(spath+"meteogram_{}.png".format(data["date"][0].strftime("%Y%m%d")))
-        pp.close(fig)
     
         #Returning
-        return
+        return (fig, ax)
+    
+    ### Method to plot analysis region
+    ### Inputs:
+    ###   gid=, integer, optional, GFS grid to plot. Defaults to 1. There is only 1.
+    ###   lc=, boolean, optional, Flag to include land cover imagery. Defaults to False.
+    ###   points=, list of tuples, optional, tuples of lon/lat pairs.
+    ###
+    ### Outputs:
+    ###   (fig, ax) tuple with pyplot figure and axis object.
+    def plot_grid(self, gid=1, lc=False, points=[]):
+        
+        ### Plot subset region
+        #Create figure and axis objects
+        fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.proj})
+        
+        #Add continents and states
+        ax.coastlines()
+        ax.add_feature(self.states)
+        ax.stock_img()
+                
+        #Set extent and make gridlines
+        gl = ax.gridlines(crs=self.pcp, draw_labels=False, linewidth=1, linestyle=":", color="grey")
+        ax.set_extent(self.extent, crs=self.pcp)
+        gl.xlabels_bottom = True
+        gl.ylabels_left = True
+        gl.xformatter = cmg.LONGITUDE_FORMATTER
+        gl.yformatter = cmg.LATITUDE_FORMATTER
+                    
+        #Returning
+        return (fig, ax)
     
     ### Method to create radar animation
     ### Animates composite reflectivity from a single WRF domain.
@@ -1145,7 +1173,7 @@ class WRFgrid:
             return (xi, yj)
         else:
             return (xi[0], yj[0])
-    
+        
     ### Method to plot WRF grids
     ### Given a grid ID, it plots that grid and all within.
     ### Inputs:
