@@ -15,6 +15,7 @@
 import cartopy.crs as ccrs
 import cartopy.mpl.gridliner as cmg
 import cartopy.mpl.ticker as cticker
+import cartopy.feature as cfeature
 import glob
 import matplotlib.pyplot as pp
 import matplotlib.ticker as mticker
@@ -33,9 +34,14 @@ class GFSANL:
     ### Inputs:
     ###  gfspath, string, full path to directory containing GFS files
     ###  gfspre, string, optional, prefix to GFS files, defaults to none
-    def __init__(self, gfspath, gfspre=""):
+    def __init__(self, gfspath, gfspre=None):
     
-        ### First locate all files
+        ### Setup GFS file prefix
+        ### If statement supports wxmpi compatibility
+        if (gfspre == None):
+            gfspre = ""
+    
+        ### Locate all files
         self.files = sorted(glob.glob(gfspath+"/{}*".format(gfspre)))
                         
         #Extract message table from first file
@@ -75,6 +81,8 @@ class GFSANL:
         self.center_lon = (self.lons.min()+self.lons.max())/2
         self.proj = ccrs.PlateCarree(central_longitude=self.center_lon)
         self.pcp = ccrs.PlateCarree() #This is for transformations within the object
+        self.states = cfeature.NaturalEarthFeature(category="cultural",
+            name="admin_1_states_provinces_lines",scale="110m", facecolor="none")
         
         ### Build dictionary of variables and levels keyed to type of level
         #Find all types of levels and initialize dictionaries of lists with those keys         
@@ -102,6 +110,11 @@ class GFSANL:
         
         #Set period of analysis to simulation period
         self.set_anl_period(self.start_of_sim, self.end_of_sim)
+        
+        #Set current working grid
+        #Primarily for wxmpi compatibility
+        self.cg = 1
+        self.ngrids = 1
         
         #Returning
         return
@@ -165,25 +178,23 @@ class GFSANL:
 
     ### Method to retrieve closest grid point to desired location
     ### Inputs:
-    ###   lon, float or list of floats, longitude of desired point
-    ###   lat, float or list of floats, latitude of desired point
+    ###   point, tuple of floats, (lon, lat) or list of tuples of such points.
     ###
     ### Outputs:
     ###   (xi, yj), tuple of ints or list of ints, index of grid point closest to given point
     ###     xi corresponds to lon; yj corresponds to lat.
-    def get_point(self, lon, lat):
+    def get_point(self, point, gcoord=True):
         #Force lon and lats into lists.
         #This enables program consistency and user convenience.
-        if not isinstance(lon, list):
-            lon = [lon]
-            lat = [lat]
+        if not isinstance(point, list):
+            point = [point]
 
         #Lists to grid points closest to user points
         xi = []
         yj = []
 
         #Now for each lon/lat pair find the closest domain point.
-        for (ulon, ulat) in zip(lon, lat):
+        for (ulon, ulat) in point:
             #Transform point to GFS projection
             (x, y) = self.proj.transform_point(ulon, ulat, self.pcp)
 
@@ -193,8 +204,12 @@ class GFSANL:
                 return None
 
             #Calculate index of each point
-            xi.append(int(round((x-self.extent[0])/self.dx)))
-            yj.append(int(round((self.extent[3]-y)/self.dy)))
+            if gcoord:
+                xi.append(int(round((x-self.extent[0])/self.dx)))
+                yj.append(int(round((self.extent[3]-y)/self.dy)))
+            else:
+                xi.append(int(round((x-self.extent[0])/self.dx))-1)
+                yj.append(int(round((self.extent[3]-y)/self.dy))-1)
 
         #Return indices to user (only return lists if user gave list)
         if (len(xi) > 1):
@@ -245,7 +260,7 @@ class GFSANL:
     ###   period, tuple of date objects, optional, start and end times of desired analysis
     ### Outputs:
     ###   vars, array of messages that match given criteria for each file in dataset. First index is Time.
-    def get_var(self, name=None, level=None, values=False, period=None, **kwords):
+    def get_var(self, name=None, level=None, values=False, period=None, filedate=None, **kwords):
         
         #Determine time period to retreive variables over
         if (period == None):
@@ -265,7 +280,10 @@ class GFSANL:
             date = grib[1].validDate
             
             #Skip file if outside analysis period
-            if ((date < tstart) or (date > tend)):
+            if (((date < tstart) or (date > tend)) and (filedate == None)):
+                grib.close()
+                continue
+            elif ((filedate != None) and (date != filedate)):
                 grib.close()
                 continue
         
@@ -286,8 +304,44 @@ class GFSANL:
             grib.close()
             
         #Return data
-        return numpy.array(vars)
-                    
+        return numpy.squeeze(numpy.array(vars))
+    
+    ### Method to contour variable at specific model level and time
+    ### Inputs:
+    ###  var, string, name of variable to map
+    ###  level, integer, GFS level to plot variable on
+    ###  date, datetime object, date of file to to plot
+    ###
+    ### Outputs:
+    ### (fig, ax) tuple with pyplot figure and axis object.
+    def map_var(self, varname, level, date):
+    
+        #Grab selected variable
+        data = self.get_var(name=varname, level=level, filedate=date, values=True)
+        
+        ### Make the map
+        #Create figure and axis
+        fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.proj})
+        
+        #Contour
+        cont = ax.contourf(self.rlons, self.rlats, data, transform=self.pcp)
+        cb = pp.colorbar(cont)
+        cb.set_label(varname, fontsize=14)
+        
+        #Add map features
+        ax.coastlines()
+        ax.add_feature(cfeature.BORDERS, edgecolor="grey")
+        ax.add_feature(self.states, edgecolor="gray")
+        gl = ax.gridlines(crs=self.pcp, draw_labels=True, linewidth=1, color="black", alpha=0.6, linestyle="--")
+        gl.xlabels_top = False
+        gl.ylabels_right = False
+        
+        #Label plot
+        ax.set_title("Date: {}    Level: {}".format(date, level), fontsize=14, horizontalalignment="left", loc="left")
+        
+        #Return figure and axis objects
+        return (fig, ax)
+    
     ### Method to plot analysis region
     ### Inputs:
     ###   spath=, string, optional, place to save plot. Displays if not given.

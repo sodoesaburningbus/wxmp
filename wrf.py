@@ -287,9 +287,13 @@ class WRFANL:
     ### Inputs:
     ###  wrfpath, string, path to WRF output files
     ###  wrfpre, string, optional, prefix to WRF files, defaults to "wrfout_"
-    def __init__(self, wrfpath, wrfpre="wrfout_"):
+    def __init__(self, wrfpath, wrfpre=None):
+        ### Setup WRF file prefix
+        ### If statement supports wxmpi compatibility
+        if (wrfpre == None):
+            wrfpre = "wrfout_"
         
-        ### First locate all of the output files for each domain
+        ### Locate all of the output files for each domain
         #Find all files and sort them
         all_files = sorted(glob.glob(wrfpath+"/{}*".format(wrfpre)))
 
@@ -319,6 +323,8 @@ class WRFANL:
         self.slat2 = dfile.__dict__["TRUELAT2"]   
         self.proj = proj_list[self.proj_name]()
         self.pcp = ccrs.PlateCarree()
+        self.states = cfeature.NaturalEarthFeature(category="cultural",
+            name="admin_1_states_provinces_lines",scale="110m", facecolor="none")
 
         #Pull simulation start and end times
         self.tformat = "%Y-%m-%d_%H:%M:%S"
@@ -339,7 +345,6 @@ class WRFANL:
         self.type_of_level_list.append("1D")
         self.type_of_level_list.append("2D")
         
-        
         #Now create dictionaries with lists for the variables
         self.var_list = {}
         self.level_list = {}
@@ -359,18 +364,24 @@ class WRFANL:
                 self.var_list["1D"].append(dfile.variables[k].name)
                 self.level_list["1D"].append(1)
         
-        ### Destroy now unnecessary dummy file object
-        dfile.close()
-                
-        #Set period of analysis to simulation period
-        self.set_anl_period(self.start_of_sim, self.end_of_sim)
-        
         #Pull grid information for each domain
         self.get_grids()
         
         ### Set the current working grid to grid 1 (the outermost grid)
         self.cg = 1
         
+        #Set period of analysis to simulation period
+        self.set_anl_period(self.start_of_sim, self.end_of_sim)
+        
+        ### Grab latitude and longitudes
+        self.subset = False #Necessary here to disable subsetting check in get_var
+        lonlats = self.get_var(["XLONG", "XLAT"])
+        self.lons = lonlats["XLONG"][0]
+        self.lats = lonlats["XLAT"][0]
+        
+        ### Destroy now unnecessary dummy file object
+        dfile.close()
+                                
         ### Disable subsetting by default
         self.disable_subset()
         
@@ -385,6 +396,10 @@ class WRFANL:
         
         #Set extent to none
         self.anl_extent = None
+        
+        #Reset regional lat/lons
+        self.rlons = self.lons
+        self.rlats = self.lats
                 
         #Returning
         return
@@ -397,35 +412,57 @@ class WRFANL:
     ###   gcoord, optional, boolean, flag to use grid coordinates (default) or array indices.
     ###     array indices are grid coordinates minus one.
     ### Outputs:
-    ###   (xind, yind), tuple of ints, grid coordinates of desired lon/lat
+    ###   (xi, yj), tuple of ints or list of ints, index of grid point closest to given point
+    ###     xi corresponds to lon; yj corresponds to lat.
     def get_point(self, point, gid=None, gcoord=True):
-        
+                
         #Set default grid if necessary
         if (gid == None):
             gid = self.cg
+        
+        #Force lon and lats into lists.
+        #This enables program consistency and user convenience.
+        if not isinstance(point, list):
+            point = [point]
+
+        #Lists to grid points closest to user points
+        xi = []
+        yj = []
+        
+        #Now for each lon/lat pair find the closest domain point.
+        for (ulon, ulat) in point:
+        
+            #Convert points to grid coordinates (including grid center)
+            x, y = self.proj.transform_point(point[0], point[1], self.pcp)
+            cx, cy = self.proj.transform_point(self.clon[gid-1], self.clat[gid-1], self.pcp)
             
-        #Convert points to grid coordinates (including grid center)
-        x, y = self.proj.transform_point(point[0], point[1], self.pcp)
-        cx, cy = self.proj.transform_point(self.clon[gid-1], self.clat[gid-1], self.pcp)
-        
-        #Calculate change in distance in grid points
-        dxind = int(round((x-cx)/self.dx[gid-1]))
-        dyind = int(round((y-cy)/self.dy[gid-1]))
-        
-        #Calculate desired point index using center indices
-        xind = int(self.nx[gid-1]/2+dxind)
-        yind = int(self.ny[gid-1]/2+dyind)
-        
-        #Check that points are still valid.
-        if ((xind < 1) or (yind < 1) or (xind > self.nx[gid-1]) or (yind > self.ny[gid-1])):
-            print("ERROR: Point outside grid extent. Exiting...")
-            exit()
+            #Calculate change in distance in grid points
+            dxind = int(round((x-cx)/self.dx[gid-1]))
+            dyind = int(round((y-cy)/self.dy[gid-1]))
+            
+            #Calculate desired point index using center indices
+            xind = int(self.nx[gid-1]/2+dxind)
+            yind = int(self.ny[gid-1]/2+dyind)
+            
+            #Check that points are still valid.
+            if ((xind < 1) or (yind < 1) or (xind > self.nx[gid-1]) or (yind > self.ny[gid-1])):
+                print("ERROR: Point outside grid extent. Exiting...")
+                exit()
+            
+            #Store indices in lists
+            if gcoord:
+                xi.append(xind)
+                yj.append(yind)
+            else:
+                xi.append(xind-1)
+                yj.append(yind-1)
+                
             
         #Return point
-        if gcoord:
-            return (xind, yind)
+        if (len(xi) > 1):
+            return (xi, yj)
         else:
-            return (xind-1, yind-1)        
+            return (xi[0], yj[0])      
         
     ### Method to pull variables from the WRF simulation.
     ### This method retrieves user-requested variables over a time-period
@@ -480,6 +517,9 @@ class WRFANL:
             if (((date < tstart) or (date > tend)) and (filedate == None)):
                 fn.close()
                 continue
+            elif ((filedate != None) and (date != filedate)):
+                fn.close()
+                continue
                 
             #Store date
             vars["date"].append(date)
@@ -509,6 +549,13 @@ class WRFANL:
                                 except: #3D case
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,yind,xind]))
             
+                #Single out requested level if provided
+                if (level != None):
+                    try: #3D case
+                        vars[vl][-1] = numpy.squeeze(vars[vl][-1][level,:,:])
+                    except: #Only fails in 2D case
+                        pass
+            
             except Exception as err:
                 fn.close()
                 print(err)
@@ -517,14 +564,10 @@ class WRFANL:
             #Close file
             fn.close()
     
-        #Convert lists to numpy arrays
+        #Convert lists to numpy arrays (and pull desired level if so)
         for k in vars.keys():
-            vars[k] = numpy.array(vars[k])
-            
-        #Pull only one vertical level if requested
-        if (level != None):
-            vars = numpy.squeeze(vars[:,level,:,:])
-    
+            vars[k] = numpy.squeeze(numpy.array(vars[k]))
+                
         #Returning
         return vars
     
@@ -580,8 +623,36 @@ class WRFANL:
     ###  var, string, name of variable to map
     ###  level, integer, WRF level to plot variable on
     ###  date, datetime object, date of file to to plot
-    def map_var(varname, level, date):
+    ###
+    ### Outputs:
+    ### (fig, ax) tuple with pyplot figure and axis object.
+    def map_var(self, varname, level, date):
+    
+        #Grab selected variable
+        data = self.get_var([varname], level=level, filedate=date)
         
+        ### Make the map
+        #Create figure and axis
+        fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.proj})
+        
+        #Contour
+        cont = ax.contourf(self.rlons, self.rlats, data[varname], transform=self.pcp)
+        cb = pp.colorbar(cont)
+        cb.set_label(varname, fontsize=14)
+        
+        #Add map features
+        ax.coastlines()
+        ax.add_feature(cfeature.BORDERS, edgecolor="grey")
+        ax.add_feature(self.states, edgecolor="gray")
+        gl = ax.gridlines(crs=self.pcp, draw_labels=True, linewidth=1, color="black", alpha=0.6, linestyle="--")
+        gl.xlabels_top = False
+        gl.ylabels_right = False
+        
+        #Label plot
+        ax.set_title("Date: {}    Level: {}".format(date, level), fontsize=14, horizontalalignment="left", loc="left")
+        
+        #Return figure and axis objects
+        return (fig, ax)        
     
     ### Method to plot meteogram from WRF simulation
     ### Temperature, dewpoint, wind speed, and solar radiation are plotted for a single
@@ -715,11 +786,7 @@ class WRFANL:
         else:
             tstart = period[0]
             tend = period[1]
-        
-        #Crerate cartopy states feature object for plotting
-        states = cfeature.NaturalEarthFeature(category="cultural",
-            name="admin_1_states_provinces_lines",scale="110m", facecolor="none")
-        
+                
         #Plot each frame of the gif
         for f in self.files[gid-1]:
         
@@ -761,7 +828,7 @@ class WRFANL:
             #Add map features
             ax.coastlines()
             ax.add_feature(cfeature.BORDERS, edgecolor="grey")
-            ax.add_feature(states, edgecolor="gray")
+            ax.add_feature(self.states, edgecolor="gray")
             if (point != None):
                 ax.scatter(point[0], point[1], transform=self.pcp, color="black")
             
