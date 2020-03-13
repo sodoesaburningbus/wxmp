@@ -9,6 +9,7 @@ Files included in package:
 Module files:
  gfs.py - Contains classes to work with GFS data sets
  wrf.py - Contains classes to work with the WRF model
+ wxmpi.py - Contains class for interfacing with data set classes
 
 #Example files in the examples directory:
  test_gfs.py - Runs some basic examples of the GFS classes
