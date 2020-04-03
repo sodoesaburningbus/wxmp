@@ -62,14 +62,27 @@ class wxmpi:
     ###   point, tuple of floats, (lon, lat) or list of tuples of such points.
     ###
     ### Outputs:
-    ###   (xi, yj), tuple of ints or list of ints, index of grid point closest to given point
+    ###   (xi, yj), tuple of ints or list of ints, array index of grid point closest to given point
     ###     xi corresponds to lon; yj corresponds to lat.
-    def get_point(self, point, gcoord=True):
+    def get_point(self, point, gcoord=False):
     
         #Call model method
         return self.dataset.get_point(point, gcoord=gcoord)
+    
+    ### Method to retrieve soundings from the data set
+    ### Inputs:
+    ###   point, tuple of floats, (lon, lat) or list of tuples of such points
+    ###
+    ### Outputs:
+    ###   sounding, dictionary of lists containing sounding info, or list of such dictionaries with len(points)
+    ###     dictionaries are keyed as ["temp", "pres", "mixr"] for temperature (K), pressure (hPa),
+    ###     and mixing ratio (kg/kg) respectively.
+    def get_sounding(self, point, **kwords):
         
-    ### Method to retrieve variables from data set
+        #Call model method
+        return self.dataset.get_sounding(point, **kwords)
+
+    ### Method to retrieve variables from data set as a 2D field
     ### Inputs:
     ###  var_label, string, name of variable to retreive
     ###  level, integer, pressure level of variable to retrieve (in millibars)
@@ -78,8 +91,8 @@ class wxmpi:
     def get_var2D(self, var_label, level):
     
         ### Retreive variable based on model dataset
-        if (self.dataset == "WRF"): #WRF
-            #Retreive requested variable
+        if (self.dataset_name == "WRF"): #WRF
+            #Retrieve requested variable
             vars = self.dataset.get_var([var_label, "PB", "P"])
                         
             #Calculate total pressure
@@ -101,7 +114,7 @@ class wxmpi:
                 else: #Case in which desired level is present in model
                     var.append(vars[var_label][i,pind,:,:])
                                 
-        elif (self.dataset == "GFS"): #GFS
+        elif (self.dataset_name == "GFS"): #GFS
             #Retreive variables
             try: #Trivial case of level is present in model
                 return self.dataset.get_var(name=var_label, level=level, values=True)
@@ -130,6 +143,35 @@ class wxmpi:
         ### Return variable
         return numpy.array(var)
     
+    ### Method to retrieve variables from data set as a 3D field
+    ### Inputs:
+    ###  var_label, string, name of variable to retreive
+    ###  leveltype, string, optional, type of model level. Default varies with data set.
+    ### Outputs:
+    ###  var, 4D arrays of floats, variable at all model levels for all time steps.
+    ###   Indexed as (Time, Z, Y, X)
+    def get_var3D(self, var_label, leveltype=None):
+        
+        ### Handle data set differently based on model
+        if (self.dataset_name == "WRF"): #WRF
+            return self.dataset.get_var([var_label])[var_label]
+
+        elif (self.dataset_name == "GFS"): #GFS
+            #Check if using default model level type
+            if (leveltype == None):
+                leveltype = "isobaricInhPa"
+            
+            #Loop over each model level
+            var = [] #List to hold arrays
+            for level in self.dataset.level_list[leveltype]:
+                var.append(self.dataset.get_var(name=var_label, level=level, values=True))
+
+            #Convert list to numpy array
+            var = numpy.swapaxes(numpy.array(var), 1, 0)
+
+            #Returning
+            return var
+
     ### Method to retreive a WxChallenge forecast
     ### Inputs:
     ###   point, tuple of floats, (lon, lat) of forecast location
@@ -147,7 +189,7 @@ class wxmpi:
         #Not all models support this option.
         try:
             return self.dataset.wxchallenge(point, period=period)
-        except: Exception as err
+        except Exception as err:
             print("Warning: Not all models support this option. Actual error below.")
             print(err)
             raise Exception
@@ -181,7 +223,7 @@ class wxmpi:
         #Not all models support this option.
         try:
             return self.dataset.meteogram(spath, point=None, period=None)
-        except: Exception as err
+        except Exception as err:
             print("Warning: Not all models support this option. Actual error below.")
             print(err)
             raise Exception
@@ -227,7 +269,7 @@ class wxmpi:
         #Not all models support this option.
         try:
             return self.dataset.set_cg(gid)
-        except: Exception as err
+        except Exception as err:
             print("Warning: Not all models support this option. Actual error below.")
             print(err)
             raise Exception

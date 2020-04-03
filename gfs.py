@@ -12,6 +12,7 @@
 #PyGRIB
 
 #Importing modules
+import atmos.thermo as at
 import cartopy.crs as ccrs
 import cartopy.mpl.gridliner as cmg
 import cartopy.mpl.ticker as cticker
@@ -189,7 +190,7 @@ class GFSANL:
         if not isinstance(point, list):
             point = [point]
 
-        #Lists to grid points closest to user points
+        #Lists to hold grid points closest to user points
         xi = []
         yj = []
 
@@ -205,11 +206,11 @@ class GFSANL:
 
             #Calculate index of each point
             if gcoord:
-                xi.append(int(round((x-self.extent[0])/self.dx)))
-                yj.append(int(round((self.extent[3]-y)/self.dy)))
+                xi.append(int(round((x-self.extent[0])/self.res)))
+                yj.append(int(round((self.extent[3]-y)/self.res)))
             else:
-                xi.append(int(round((x-self.extent[0])/self.dx))-1)
-                yj.append(int(round((self.extent[3]-y)/self.dy))-1)
+                xi.append(int(round((x-self.extent[0])/self.res))-1)
+                yj.append(int(round((self.extent[3]-y)/self.res))-1)
 
         #Return indices to user (only return lists if user gave list)
         if (len(xi) > 1):
@@ -251,6 +252,81 @@ class GFSANL:
         #Return indices (Lats firsts because arrays are ordered [lat, lon])
         return (lat1_ind, lat2_ind, lon1_ind, lon2_ind)
     
+    ### Method to retreive sounding
+    ### Inputs:
+    ###   point, tuple of floats, (lon, lat) or list of tuples of such points.
+    ###   period, tuple of date objects, optional, start and end times of desired analysis Defaults to working analysis period.
+    ###   filedate, datetime object, optional, date of file to pull. (Only retreives one file's data if set). Defaults to None.
+    ###
+    ### Outputs:
+    ###   sounding, dictionary of lists containing sounding info, or list of such dictionaries with len(points)
+    ###     dictionaries are keyed ["temp", "pres", "dewp", "uwind", "vwind"] for temperature (K), pressure (hPa),
+    ###     dewpoint (K), zonal wind speed (m/s), and meriodinal wind speed (m/s) respectively.
+    ###     Arrays are (Time, Level) with lowest level first.
+    def get_sounding(self, point, period=None, filedate=None):
+        
+        #Force lon and lats into lists.
+        #This enables program consistency and user convenience.
+        if not isinstance(point, list):
+            point = [point]
+
+        #Variable name list
+        var_names = ["Temperature", "U component of wind", "V component of wind", "Relative humidity"]
+        dict_keys = ["temp", "uwind", "vwind", "dewp", "pres"]
+
+        #Grab array indices corresponding to given points
+        [xinds, yinds] = self.get_point(point, gcoord=False)
+
+        #Create list to hold soundings
+        sounding = []
+
+        #Loop over each point
+        for p in point:
+
+            #Retrieve grid indices
+            [xind, yind] = self.get_point(p, gcoord=False)
+
+            #Create dictionary to hold sounding
+            data = {}
+
+            #Retrieve messages from files
+            for [vn, dk] in zip(var_names, dict_keys):
+                messages = self.get_var(name=vn, typeOfLevel="isobaricInhPa")
+                
+                #Loop over time and layers
+                data[dk] = []
+                dummy = numpy.zeros(messages.shape)
+                for i in range(messages.shape[0]):
+                    for j in range(messages.shape[1]):
+                        dummy[i,j] = messages[i,j].values[yind, xind]
+                data[dk].append(dummy)
+                                
+            #Now force everything into arrays
+            for k in data.keys():
+                data[k] = numpy.atleast_2d(numpy.squeeze(numpy.array(data[k])))
+
+            #Grab pressure levels
+            data["pres"] = numpy.atleast_2d(list(m.level for m in messages[0,:]))
+
+            #Calculate dewpoint
+            data["dewp"] = at.dewpoint(at.sat_vaporpres(data["temp"])*(data["dewp"]/100))
+
+            #Reverse levels if pressure not start at surface
+            if (data["pres"][0,0] < data["pres"][0,-1]):
+                for k in data.keys():
+                    data[k] = numpy.flip(data[k], axis=1)
+
+            #Append sounding to list
+            sounding.append(data)
+
+        #Return soundings as list
+        #or as dictionary if only one.
+        if (len(sounding) > 1):
+            return sounding
+        else:
+            return sounding[0]
+
+
     ### Method to retrieve messages by name and level
     ### Inputs: (either is optional, but at least one is required)
     ###   name=, string, optional, name of variable to retrieve
@@ -258,6 +334,7 @@ class GFSANL:
     ###   values=False, boolean, optional, if only one message whether to return the values
     ###     instead of the full message. Defaults to False.
     ###   period, tuple of date objects, optional, start and end times of desired analysis
+    ###   filedate, datetime object, optional, date of file to pull. (Only retreives one file's data if set).
     ### Outputs:
     ###   vars, array of messages that match given criteria for each file in dataset. First index is Time.
     def get_var(self, name=None, level=None, values=False, period=None, filedate=None, **kwords):
@@ -330,8 +407,8 @@ class GFSANL:
         
         #Add map features
         ax.coastlines()
-        ax.add_feature(cfeature.BORDERS, edgecolor="grey")
-        ax.add_feature(self.states, edgecolor="gray")
+        ax.add_feature(cfeature.BORDERS, edgecolor="black")
+        ax.add_feature(self.states, edgecolor="black")
         gl = ax.gridlines(crs=self.pcp, draw_labels=True, linewidth=1, color="black", alpha=0.6, linestyle="--")
         gl.xlabels_top = False
         gl.ylabels_right = False

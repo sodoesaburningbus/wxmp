@@ -433,7 +433,7 @@ class WRFANL:
         for (ulon, ulat) in point:
         
             #Convert points to grid coordinates (including grid center)
-            x, y = self.proj.transform_point(point[0], point[1], self.pcp)
+            x, y = self.proj.transform_point(ulon, ulat, self.pcp)
             cx, cy = self.proj.transform_point(self.clon[gid-1], self.clat[gid-1], self.pcp)
             
             #Calculate change in distance in grid points
@@ -463,7 +463,68 @@ class WRFANL:
             return (xi, yj)
         else:
             return (xi[0], yj[0])      
+    
+    ### Method to retreive sounding
+    ### Inputs:
+    ###   point, tuple of floats, (lon, lat) or list of tuples of such points.
+    ###   gid, integer, optional, grid id to pull sounding from. Defaults to current working grid.
+    ###   period, tuple of date objects, optional, start and end times of desired analysis Defaults to working analysis period.
+    ###   filedate, datetime object, optional, date of file to pull. (Only retreives one file's data if set). Defaults to None.
+    ###
+    ### Outputs:
+    ###   sounding, dictionary of lists containing sounding info, or list of such dictionaries with len(points)
+    ###     dictionaries are keyed ["temp", "pres", "dewp", "uwind", "vwind"] for temperature (K), pressure (hPa),
+    ###     dewpoint (K), zonal wind speed (m/s), and meriodinal wind speed (m/s) respectively.
+    ###     Note that winds are rotated to Earth coordinates.
+    def get_sounding(self, point, gid=None, period=None, filedate=None):
+
+        #Force lons and lats into lists.
+        #This enables program consistency and user convenience.
+        if not isinstance(point, list):
+            point = [point]
+
+        #Set default grid if necessary
+        if (gid == None):
+            gid = self.cg
+            
+        #Determine time period to retreive variables over
+        if (period == None):
+            tstart = self.start_of_anl
+            tend = self.end_of_anl
+        else:
+            tstart = period[0]
+            tend = period[1]
         
+        #Pull soundings at given locations
+        sounding = []
+        for p in point:
+            #Retreive data
+            data = self.get_var(["T", "P", "PB", "QVAPOR", "U", "V", "SINALPHA", "COSALPHA"], point=p, gid=gid, period=(tstart, tend), filedate=filedate)
+
+            #Calculate actual temperature and pressure
+            ptemp = data["T"]+300.0 #Add WRF base temp to variable
+            pres = (data["P"]+data["PB"]) #Pressure in Pa. On return converts to hPa.
+            temp = at.poisson(100000.0, pres, ptemp) #Convert potential temperature to temperature
+
+            #Calculate dewpoint
+            dewp = at.dewpoint(at.wtoe(pres, data["QVAPOR"]))
+
+            #Rotate winds
+            uwind = data["U"]*data["COSALPHA"]-data["V"]*data["SINALPHA"]
+            vwind = data["V"]*data["COSALPHA"]+data["U"]*data["SINALPHA"]
+
+            #Append sounding to list
+            sounding.append({"temp":numpy.atleast_2d(temp), "pres":numpy.atleast_2d(pres/100.0),
+                "dewp":numpy.atleast_2d(dewp), "uwind":numpy.atleast_2d(uwind),
+                "vwind":numpy.atleast_2d(vwind)})
+
+        #Return soundings as list
+        #or as dictionary if only one.
+        if (len(sounding) > 1):
+            return sounding
+        else:
+            return sounding[0]
+
     ### Method to pull variables from the WRF simulation.
     ### This method retrieves user-requested variables over a time-period
     ### for the requested grid. It eliminates extraneous dimensions in the process.
@@ -496,7 +557,7 @@ class WRFANL:
         
         #Calulcate user point if given
         if (point != None):
-            (xind, yind) = self.get_point(point, gid)
+            (xind, yind) = self.get_point(point, gid, gcoord=False)
         
         #Create dictionary to store requested variables
         vars = {"date":[]}
@@ -547,14 +608,7 @@ class WRFANL:
                                 try: #2D case
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,yind,xind]))
                                 except: #3D case
-                                    vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,yind,xind]))
-            
-                #Single out requested level if provided
-                if (level != None):
-                    try: #3D case
-                        vars[vl][-1] = numpy.squeeze(vars[vl][-1][level,:,:])
-                    except: #Only fails in 2D case
-                        pass
+                                    vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,yind,xind]))               
             
             except Exception as err:
                 fn.close()
@@ -566,7 +620,13 @@ class WRFANL:
     
         #Convert lists to numpy arrays (and pull desired level if so)
         for k in vars.keys():
-            vars[k] = numpy.squeeze(numpy.array(vars[k]))
+            if (level != None): #Pull a level
+                try: #3D case
+                    vars[k] = numpy.squeeze(numpy.array(vars[k][-1][level,:,:]))
+                except Exception as err: #Only fails in 2D case
+                    pass
+            else: #No desired level
+                vars[k] = numpy.squeeze(numpy.array(vars[k]))
                 
         #Returning
         return vars
@@ -636,14 +696,15 @@ class WRFANL:
         fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.proj})
         
         #Contour
+        print(data[varname].shape)
         cont = ax.contourf(self.rlons, self.rlats, data[varname], transform=self.pcp)
         cb = pp.colorbar(cont)
         cb.set_label(varname, fontsize=14)
         
         #Add map features
         ax.coastlines()
-        ax.add_feature(cfeature.BORDERS, edgecolor="grey")
-        ax.add_feature(self.states, edgecolor="gray")
+        ax.add_feature(cfeature.BORDERS, edgecolor="black")
+        ax.add_feature(self.states, edgecolor="black")
         gl = ax.gridlines(crs=self.pcp, draw_labels=True, linewidth=1, color="black", alpha=0.6, linestyle="--")
         gl.xlabels_top = False
         gl.ylabels_right = False
