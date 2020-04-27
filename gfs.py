@@ -254,7 +254,8 @@ class GFSANL:
     
     ### Method to retreive sounding
     ### Inputs:
-    ###   point, tuple of floats, (lon, lat) or list of tuples of such points.
+    ###   point, tuple of floats, optional, (lon, lat) or list of tuples of such points.
+    ###     if absent, the mean sounding for the analysis region is pulled.
     ###   period, tuple of date objects, optional, start and end times of desired analysis Defaults to working analysis period.
     ###   filedate, datetime object, optional, date of file to pull. (Only retreives one file's data if set). Defaults to None.
     ###
@@ -263,28 +264,64 @@ class GFSANL:
     ###     dictionaries are keyed ["temp", "pres", "dewp", "uwind", "vwind"] for temperature (K), pressure (hPa),
     ###     dewpoint (K), zonal wind speed (m/s), and meriodinal wind speed (m/s) respectively.
     ###     Arrays are (Time, Level) with lowest level first.
-    def get_sounding(self, point, period=None, filedate=None):
+    def get_sounding(self, point=None, period=None, filedate=None):
         
-        #Force lon and lats into lists.
-        #This enables program consistency and user convenience.
-        if not isinstance(point, list):
-            point = [point]
-
         #Variable name list
         var_names = ["Temperature", "U component of wind", "V component of wind", "Relative humidity"]
         dict_keys = ["temp", "uwind", "vwind", "dewp", "pres"]
-
-        #Grab array indices corresponding to given points
-        [xinds, yinds] = self.get_point(point, gcoord=False)
 
         #Create list to hold soundings
         sounding = []
 
         #Loop over each point
-        for p in point:
+        if (point != None):
+            #Force lon and lats into lists.
+            #This enables program consistency and user convenience.
+            if not isinstance(point, list):
+                point = [point]            
+                
+            for p in point:
 
-            #Retrieve grid indices
-            [xind, yind] = self.get_point(p, gcoord=False)
+                #Retrieve grid indices
+                print(point)
+                print(p)
+                [xind, yind] = self.get_point(p, gcoord=False)
+
+                #Create dictionary to hold sounding
+                data = {}
+
+                #Retrieve messages from files
+                for [vn, dk] in zip(var_names, dict_keys):
+                    messages = self.get_var(name=vn, typeOfLevel="isobaricInhPa")
+                    
+                    #Loop over time and layers
+                    data[dk] = []
+                    dummy = numpy.zeros(messages.shape)
+                    for i in range(messages.shape[0]):
+                        for j in range(messages.shape[1]):
+                            dummy[i,j] = messages[i,j].values[yind, xind]
+                    data[dk].append(dummy)
+                                    
+                #Now force everything into arrays
+                for k in data.keys():
+                    data[k] = numpy.atleast_2d(numpy.squeeze(numpy.array(data[k])))
+
+                #Grab pressure levels
+                data["pres"] = numpy.atleast_2d(list(m.level for m in messages[0,:]))
+
+                #Calculate dewpoint
+                data["dewp"] = at.dewpoint(at.sat_vaporpres(data["temp"])*(data["dewp"]/100))
+
+                #Reverse levels if pressure not start at surface
+                if (data["pres"][0,0] < data["pres"][0,-1]):
+                    for k in data.keys():
+                        data[k] = numpy.flip(data[k], axis=1)
+
+                #Append sounding to list
+                sounding.append(data)
+
+        #Compute composite sounding over analysis region if no point given.
+        else:
 
             #Create dictionary to hold sounding
             data = {}
@@ -298,9 +335,9 @@ class GFSANL:
                 dummy = numpy.zeros(messages.shape)
                 for i in range(messages.shape[0]):
                     for j in range(messages.shape[1]):
-                        dummy[i,j] = messages[i,j].values[yind, xind]
+                        dummy[i,j] = numpy.mean(messages[i,j].values[self.yind1:self.yind2, self.xind1:self.xind2])
                 data[dk].append(dummy)
-                                
+
             #Now force everything into arrays
             for k in data.keys():
                 data[k] = numpy.atleast_2d(numpy.squeeze(numpy.array(data[k])))
@@ -317,7 +354,7 @@ class GFSANL:
                     data[k] = numpy.flip(data[k], axis=1)
 
             #Append sounding to list
-            sounding.append(data)
+            sounding.append(data)          
 
         #Return soundings as list
         #or as dictionary if only one.
@@ -472,8 +509,8 @@ class GFSANL:
         #Check that times are within bounds of simulation
         if ((tstart < self.start_of_sim) or (tstart > self.end_of_sim) or
             (tend < self.start_of_sim) or (tend > self.end_of_sim)):
-            print("Requested period outside of simulation period. Exiting.")
-            exit()
+            print("Requested period outside of simulation period. Returning.")
+            return -1
             
         #Set new analysis bounds
         self.start_of_anl = tstart
