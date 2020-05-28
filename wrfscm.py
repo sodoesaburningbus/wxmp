@@ -161,8 +161,12 @@ class WRFSCM:
         dewp = at.dewpoint(at.wtoe(pres, data["QVAPOR"]))
 
         #Rotate winds
-        uwind = data["U"]*data["COSALPHA"][0]-data["V"]*data["SINALPHA"][0]
-        vwind = data["V"]*data["COSALPHA"][0]+data["U"]*data["SINALPHA"][0]
+        try: #Case for multiple soundings
+            uwind = data["U"]*data["COSALPHA"][0]-data["V"]*data["SINALPHA"][0]
+            vwind = data["V"]*data["COSALPHA"][0]+data["U"]*data["SINALPHA"][0]
+        except: #Case for single sounding
+            uwind = data["U"]*data["COSALPHA"][0]-data["V"]*data["SINALPHA"][0]
+            vwind = data["V"]*data["COSALPHA"][0]+data["U"]*data["SINALPHA"][0]
 
         #Append sounding to list
         sounding.append({"temp":numpy.atleast_2d(temp), "pres":numpy.atleast_2d(pres/100.0),
