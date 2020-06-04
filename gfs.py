@@ -57,8 +57,8 @@ class GFSANL:
         lat1 = grib[1].latitudeOfFirstGridPointInDegrees
         lon1 = grib[1].longitudeOfFirstGridPointInDegrees
         lat2 = grib[1].latitudeOfLastGridPointInDegrees
-        lon2 = grib[1].longitudeOfLastGridPointInDegrees
-        
+        lon2 = grib[1].longitudeOfLastGridPointInDegrees           
+
         #Get start time of dataset
         self.start_of_sim = grib[1].validDate
         
@@ -69,11 +69,12 @@ class GFSANL:
         
         #Build up vectors for grid
         lats = numpy.linspace(lat1, lat2, self.ny)
-        lons = numpy.linspace(lon1, lon2, self.nx)
-                
+        lons = numpy.linspace(lon1, lon2, self.nx)   
+
         #Finally build and store 2D lat/lon arrays as attributes
         self.lons, self.lats = numpy.meshgrid(lons, lats)
-        
+        self.full_extent = [self.lons.min(), self.lons.max(), self.lats.min(), self.lats.max()]
+
         #Set subsetting to off
         self.disable_subset()
         
@@ -128,7 +129,7 @@ class GFSANL:
         self.subset = False
         
         #Set analysis region to full GFS domain
-        self.extent = [self.lons.min(), self.lons.max(), self.lats.min(), self.lats.max()]
+        self.extent = self.full_extent
         self.xind1 = 0
         self.xind2 = self.nx
         self.yind1 = 0
@@ -224,7 +225,7 @@ class GFSANL:
     ###  extent, list of floats, [west lon, east lon, south lat, north lat]
     ###
     ### Outputs,
-    ###   subset, boolean array, subset indices corresponding to subsetted region.
+    ###   subset, tuple of ints (y1, y2, x1, x2), array indices corresponding to subsetted region.
     def get_subset(self, extent):
         
         #First add 360 to any longitudes that are negative (b/c GFS goes from [0, 360])
@@ -283,8 +284,6 @@ class GFSANL:
             for p in point:
 
                 #Retrieve grid indices
-                print(point)
-                print(p)
                 [xind, yind] = self.get_point(p, gcoord=False)
 
                 #Create dictionary to hold sounding

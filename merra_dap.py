@@ -116,7 +116,7 @@ class MERANL:
                 #Load data
                 try:                
                     self.dataset.append(open_url(url, session=session))
-                    data = open_url(url, session=session)
+                    #data = open_url(url, session=session)
                 except:
                     continue
 
@@ -127,7 +127,7 @@ class MERANL:
         del(session)
 
         #Store variables
-        self.variables = sorted(list(self.dataset[0].keys()))
+        self.var_list = sorted(list(self.dataset[0].keys()))
 
         #Now pull grid info
         lons = numpy.array(self.dataset[0]["lon"][:])
@@ -276,7 +276,7 @@ class MERANL:
         #Create datetime objects for each day within bounds
         duration = (self.end_of_anl-self.start_of_anl)
         duration = int(numpy.ceil((duration.days*24+duration.seconds*3600)/24))
-        self.dates = list(self.start_of_anl+td(days=i) for i in range(duration))
+        self.dates = list(self.start_of_anl+td(days=i) for i in range(duration+1))
     
         #Returning
         return

@@ -123,6 +123,28 @@ class WRFSCM:
         
         ### Returning
         return
+
+    ### Method to calculate second time derivative of the pressure field for
+    ### evaluating spin-up time.
+    ### Inputs:
+    ###  None
+    ### Outputs:
+    ###  dpdt2, array of floats, average second time derivative of pressure as a funtion of time
+    def dpdt2(self):
+        
+        #Retreiving necessary variables
+        data = self.get_var(["P", "PB", "XTIME"])
+
+        #Convert time to seconds from minutes
+        data["XTIME"] /= 60.0
+
+        #Computing the second derivative
+        pres = (data["P"]+data["PB"])[:,0]
+        dt = (data["XTIME"][1:]-data["XTIME"][:-1])
+        dpdt = (pres[1:]-pres[:-1])/dt
+        dpdt2 = (dpdt[1:]-dpdt[:-1])/dt[1:]
+        
+        return dpdt2
             
     ### Method to retreive sounding
     ### Inputs:
@@ -220,7 +242,11 @@ class WRFSCM:
                     data[vl] = numpy.squeeze(self.ncfile.variables[vl][start_ind:end_ind+1,0,0])
 
                 elif (len(self.ncfile.variables[vl].shape) == 4): #3D case
-                    data[vl] = numpy.squeeze(self.ncfile.variables[vl][start_ind:end_ind+1,:,0,0])        
+                    data[vl] = numpy.squeeze(self.ncfile.variables[vl][start_ind:end_ind+1,:,0,0])
+            
+                elif (len(self.ncfile.variables[vl].shape) == 1): #1D case
+                    data[vl] = self.ncfile.variables[vl][start_ind:end_ind+1]
+
         except Exception as err:
             print(err)
             raise Exception
@@ -333,7 +359,7 @@ class WRFSCM:
     
         #Returning
         return (fig, ax)
-        
+    
     ### Method to set working time period
     ### Inputs:
     ###   tstart, datetime object, start of simulation period to be analyzed

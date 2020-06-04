@@ -6,8 +6,8 @@ from wxmp import merra_dap as wm
 from datetime import datetime as dt
 
 #Create test dates
-start_date = dt.strptime("20160606", "%Y%m%d")
-end_date = dt.strptime("20160608", "%Y%m%d")
+start_date = dt.strptime("20160618", "%Y%m%d")
+end_date = dt.strptime("20160621", "%Y%m%d")
 
 #Password and username
 username = "cphillips574"
@@ -52,6 +52,6 @@ print("All time var shape: {}".format(var.shape))
 
 #Now grab a variable for a specific time
 var = merra.get_var(merra.variables[0], filedate=dt.strptime("2016060708", "%Y%m%d%H"))
-print("Singe time var shape: {}".format(var.shape))
+print("Single time var shape: {}".format(var.shape))
 
 print("TEST SUCCESSFUL")

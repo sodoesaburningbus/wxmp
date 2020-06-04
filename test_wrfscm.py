@@ -16,14 +16,18 @@ print(temp.min())
 print(temp.max())
 
 #Set the analysis period
-scm.set_anl_period(scm.all_sim_times[24], scm.all_sim_times[48])
+#scm.set_anl_period(scm.all_sim_times[24], scm.all_sim_times[48])
 
 #Print the analysis period
 print("Start: {}, End: {}".format(scm.start_of_anl.strftime("%Y-%d-%m %H:%M"), scm.end_of_anl.strftime("%Y-%d-%m %H:%M")))
 
 #Plot a meteogram
-(fig, ax) = scm.meteogram()
+#(fig, ax) = scm.meteogram()
 #pp.show()
+
+spinup = scm.dpdt2()
+pp.plot(spinup)
+pp.show()
 
 #Grab a sounding
 sounding = scm.get_sounding()
