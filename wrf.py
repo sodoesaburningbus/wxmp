@@ -121,7 +121,7 @@ class WPSNL:
         wrfnml["domains"]["e_sn"] = list(self.ny)
         wrfnml["domains"]["dx"] = list(self.dx)
         wrfnml["domains"]["dy"] = list(self.dy)
-        wrfnml["domains"]["grid_id"] = list(numpy.array(self.nml["geogrid"]["parent_id"], dtype="int")+1)
+        wrfnml["domains"]["grid_id"][1:] = list(numpy.array(self.nml["geogrid"]["parent_id"], dtype="int")+1)[1:]
         wrfnml["domains"]["parent_id"] = self.nml["geogrid"]["parent_id"]
         wrfnml["domains"]["i_parent_start"] = self.nml["geogrid"]["i_parent_start"]
         wrfnml["domains"]["j_parent_start"] = self.nml["geogrid"]["j_parent_start"]
