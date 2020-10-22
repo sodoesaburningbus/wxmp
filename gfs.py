@@ -57,7 +57,11 @@ class GFSANL:
         lat1 = grib[1].latitudeOfFirstGridPointInDegrees
         lon1 = grib[1].longitudeOfFirstGridPointInDegrees
         lat2 = grib[1].latitudeOfLastGridPointInDegrees
-        lon2 = grib[1].longitudeOfLastGridPointInDegrees           
+        lon2 = grib[1].longitudeOfLastGridPointInDegrees
+
+        #Make sure lon2 is over appropriate range
+        if (lon2 < 0):
+            lon2 += 360        
 
         #Get start time of dataset
         self.start_of_sim = grib[1].validDate
@@ -282,17 +286,16 @@ class GFSANL:
                 point = [point]            
                 
             for p in point:
-
+                print(p)
                 #Retrieve grid indices
                 [xind, yind] = self.get_point(p, gcoord=False)
-
+                print(xind,yind)
                 #Create dictionary to hold sounding
                 data = {}
 
                 #Retrieve messages from files
                 for [vn, dk] in zip(var_names, dict_keys):
-                    messages = self.get_var(name=vn, typeOfLevel="isobaricInhPa")
-                    
+                    messages = numpy.atleast_2d(self.get_var(name=vn, typeOfLevel="isobaricInhPa", filedate=filedate))[:,:21] #Stopping sounding at 100hPa because not all variables go all the way up.
                     #Loop over time and layers
                     data[dk] = []
                     dummy = numpy.zeros(messages.shape)
@@ -306,7 +309,7 @@ class GFSANL:
                     data[k] = numpy.atleast_2d(numpy.squeeze(numpy.array(data[k])))
 
                 #Grab pressure levels
-                data["pres"] = numpy.atleast_2d(list(m.level for m in messages[0,:]))
+                data["pres"] = numpy.atleast_2d(list(m.level for m in messages[0,:21]))
 
                 #Calculate dewpoint
                 data["dewp"] = at.dewpoint(at.sat_vaporpres(data["temp"])*(data["dewp"]/100))
@@ -327,7 +330,7 @@ class GFSANL:
 
             #Retrieve messages from files
             for [vn, dk] in zip(var_names, dict_keys):
-                messages = self.get_var(name=vn, typeOfLevel="isobaricInhPa")
+                messages = numpy.atleast_2d(self.get_var(name=vn, typeOfLevel="isobaricInhPa", filedate=filedate))[:,:21] #Stopping sounding at 100hPa because not all variables go all the way up.
                 
                 #Loop over time and layers
                 data[dk] = []
@@ -342,7 +345,7 @@ class GFSANL:
                 data[k] = numpy.atleast_2d(numpy.squeeze(numpy.array(data[k])))
 
             #Grab pressure levels
-            data["pres"] = numpy.atleast_2d(list(m.level for m in messages[0,:]))
+            data["pres"] = numpy.atleast_2d(list(m.level for m in messages[0,:21]))
 
             #Calculate dewpoint
             data["dewp"] = at.dewpoint(at.sat_vaporpres(data["temp"])*(data["dewp"]/100))
@@ -399,7 +402,7 @@ class GFSANL:
             elif ((filedate != None) and (date != filedate)):
                 grib.close()
                 continue
-        
+
             #First test that appropriate inputs are given
             if ((name == None) and (level == None)): #No name or level
                 print("ERROR: Must pass at one of name or level.")
@@ -412,9 +415,13 @@ class GFSANL:
                 vars.append(grib.select(name=name, level=level, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
             else: #Name and level but returning the messages themselves
                 vars.append(grib.select(name=name, level=level, **kwords))
-                
+     
             #Close file
             grib.close()
+
+            #If filedate set, then break from loop after pulling that file
+            if (filedate != None):
+                break
             
         #Return data
         return numpy.squeeze(numpy.array(vars))

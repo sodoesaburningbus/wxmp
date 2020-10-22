@@ -96,12 +96,17 @@ class HRRRANL:
                     
         #Close grib file
         grib.close()
-        
+                
+        #Grab dates of all the analysis files
+        self.valid_dates = []
+        for f in self.files[0:]:
+            grib = pygrib.open(f)
+            self.valid_dates.append(grib[1].validDate)
+            grib.close()
+
         #Get end time of dataset
-        grib = pygrib.open(self.files[-1])
-        self.end_of_sim = grib[1].validDate
-        grib.close()
-        
+        self.end_of_sim = self.valid_dates[-1]
+
         #Set period of analysis to simulation period
         self.set_anl_period(self.start_of_sim, self.end_of_sim)
         
@@ -193,9 +198,6 @@ class HRRRANL:
             (x, y) = self.proj.transform_point(ulon, ulat, self.pcp)
             (x0, y0) = self.proj.transform_point(self.lons[0,0], self.lats[0,0], self.pcp)
 
-            print(x0, x)
-            print(y0, y)
-
             #Check that desired location is within model grid
             if ((ulon < self.extent[0]) or (ulon > self.extent[1]) or (ulat < self.extent[2]) or (ulat > self.extent[3])):
                 raise ValueError("Point Lon: {}, Lat: {} is outside the model grid.".format(ulon,ulat))
@@ -234,7 +236,6 @@ class HRRRANL:
             extent[3] = dummy
         
         #Get indice of boundaries
-        print(extent)
         lon1_ind, lat1_ind = self.get_point((extent[0], extent[2]))
         lon2_ind, lat2_ind = self.get_point((extent[1], extent[3]))
                 
@@ -374,6 +375,7 @@ class HRRRANL:
         #Loop over each file in hrrr dataset
         vars = []
         for f in self.files:
+
             #Open file
             grib = pygrib.open(f)
             

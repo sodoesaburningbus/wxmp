@@ -59,7 +59,7 @@ class WRFSCM:
 
     ### Method to construct object
     ### Inputs:
-    ###  wrfpath, string, path to WRF output files
+    ###  wrfpath, string, path to WRF output file
     ###  wrfpre, string, optional, prefix to WRF files, defaults to "wrfout_"
     def __init__(self, wrfpath, wrfpre=None):
         
