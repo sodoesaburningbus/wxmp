@@ -1,4 +1,4 @@
-#This module contains classes for visualizing the various GFS products.
+#This module contains classes for visualizing the various hrrr products.
 #Currently, three grids are handled, 0.25, 0.5, and 1.0 degree grids.
 #Written by Christopher Phillips, February 2020
 #University of Alabama in Huntsville
@@ -24,26 +24,36 @@ import numpy
 import pygrib
 
 ############################################################
-#---------------------     GFSANL     ---------------------#
+#---------------------     HRRRANL     ---------------------#
 ############################################################
-### This class contains tools for reading GFS GRIB2 files
+### This class contains tools for reading hrrr GRIB2 files
 ### It enables the user to pull variables easily, and plot
 ### common products such as soundings, and meteograms.
-class GFSANL:
+class HRRRANL:
 
-    ### Method to construct GFS analysis object
+    ### Method to construct hrrr analysis object
     ### Inputs:
-    ###  gfspath, string, full path to directory containing GFS files
-    ###  gfspre, string, optional, prefix to GFS files, defaults to none
-    def __init__(self, gfspath, gfspre=None):
+    ###  hrrrpath, string, full path to directory containing hrrr files
+    ###  hrrrpre, string, optional, prefix to hrrr files, defaults to none
+    def __init__(self, hrrrpath, hrrrpre=None, hrrrname=None):
     
-        ### Setup GFS file prefix
+        ### Setup hrrr file prefix
         ### If statement supports wxmpi compatibility
-        if (gfspre == None):
-            gfspre = ""
+        if (hrrrpre == None):
+            self.hrrrpre = ""
+            
+        ### Setup naming structure of HRRR files (needed for grabbing files by date)
+        if (hrrrname == None):
+            self.hrrrname = "hrrr.%Y%m%d.t%Hz.wrfprsf00.grib2"
+            
+        ### Store path to files
+        if (hrrrpath[-1] == "/"):
+            self.hrrrpath = hrrrpath
+        else:
+            self.hrrrpath = hrrrpath+"/"
     
         ### Locate all files
-        self.files = sorted(glob.glob(gfspath+"/{}*".format(gfspre)))
+        self.files = sorted(glob.glob(self.hrrrpath+"/{}*".format(self.hrrrpre)))
                         
         #Extract message table from first file
         grib = pygrib.open(self.files[0])
@@ -51,41 +61,29 @@ class GFSANL:
         for m in grib[0:]:
             string = "{}{}\n".format(string,m)
         self.mtable = string
-        
+                
         ### Go ahead and pull the lat/lon grid and convert to 2D grid
         #Exctract first and last points
-        lat1 = grib[1].latitudeOfFirstGridPointInDegrees
-        lon1 = grib[1].longitudeOfFirstGridPointInDegrees
-        lat2 = grib[1].latitudeOfLastGridPointInDegrees
-        lon2 = grib[1].longitudeOfLastGridPointInDegrees
-
-        #Make sure lon2 is over appropriate range
-        if (lon2 < 0):
-            lon2 += 360        
+        self.lons = numpy.reshape(grib[1].longitudes, grib[1].values.shape)-360.0 #West is negative
+        self.lats = numpy.reshape(grib[1].latitudes, grib[1].values.shape)
 
         #Get start time of dataset
         self.start_of_sim = grib[1].validDate
         
         #Now store some basic grid info
-        self.nx = grib[1].values.shape[1]
-        self.ny = grib[1].values.shape[0]
-        self.res = (lon2-lon1)/(self.nx-1)
-        
-        #Build up vectors for grid
-        lats = numpy.linspace(lat1, lat2, self.ny)
-        lons = numpy.linspace(lon1, lon2, self.nx)   
-
-        #Finally build and store 2D lat/lon arrays as attributes
-        self.lons, self.lats = numpy.meshgrid(lons, lats)
+        self.nx = grib[1].Nx
+        self.ny = grib[1].Ny
+        self.dx = grib[1].DxInMetres
+        self.dy = grib[1].DyInMetres
         self.full_extent = [self.lons.min(), self.lons.max(), self.lats.min(), self.lats.max()]
 
         #Set subsetting to off
         self.disable_subset()
         
         #Attach projection information to object
-        self.proj_name = "Global Latitude/Longitude"
+        self.proj_name = "Lambert COnformal"
         self.center_lon = (self.lons.min()+self.lons.max())/2
-        self.proj = ccrs.PlateCarree(central_longitude=self.center_lon)
+        self.proj = ccrs.LambertConformal(central_longitude=self.center_lon)
         self.pcp = ccrs.PlateCarree() #This is for transformations within the object
         self.states = cfeature.NaturalEarthFeature(category="cultural",
             name="admin_1_states_provinces_lines",scale="110m", facecolor="none")
@@ -108,7 +106,7 @@ class GFSANL:
                     
         #Close grib file
         grib.close()
-        
+                
         #Get end time of dataset
         grib = pygrib.open(self.files[-1])
         self.end_of_sim = grib[1].validDate
@@ -132,7 +130,7 @@ class GFSANL:
         #Set subsetting to False
         self.subset = False
         
-        #Set analysis region to full GFS domain
+        #Set analysis region to full hrrr domain
         self.extent = self.full_extent
         self.xind1 = 0
         self.xind2 = self.nx
@@ -180,7 +178,6 @@ class GFSANL:
             
         #Return values as numpy array
         return numpy.array(vars)
-    
 
     ### Method to retrieve closest grid point to desired location
     ### Inputs:
@@ -189,7 +186,8 @@ class GFSANL:
     ### Outputs:
     ###   (xi, yj), tuple of ints or list of ints, index of grid point closest to given point
     ###     xi corresponds to lon; yj corresponds to lat.
-    def get_point(self, point, gcoord=True):
+    def get_point(self, point, gcoord=False):
+    
         #Force lon and lats into lists.
         #This enables program consistency and user convenience.
         if not isinstance(point, list):
@@ -199,23 +197,25 @@ class GFSANL:
         xi = []
         yj = []
 
+        #Grab first domain point
+        (x0, y0) = self.proj.transform_point(self.lons[0,0], self.lats[0,0], self.pcp)
+
         #Now for each lon/lat pair find the closest domain point.
         for (ulon, ulat) in point:
-            #Transform point to GFS projection
+            #Transform point to hrrr projection
             (x, y) = self.proj.transform_point(ulon, ulat, self.pcp)
 
             #Check that desired location is within model grid
-            if ((x < self.extent[0]) or (x > self.extent[1]) or (y < self.extent[2]) or (y > self.extent[3])):
-                print("Point Lon: {}, Lat: {}) is outside the model grid. Returning...".format(ulon,ulat))
-                return None
+            if ((ulon < self.extent[0]) or (ulon > self.extent[1]) or (ulat < self.extent[2]) or (ulat > self.extent[3])):
+                raise ValueError("Point Lon: {}, Lat: {} is outside the model grid.".format(ulon,ulat))
 
             #Calculate index of each point
             if gcoord:
-                xi.append(int(round((x-self.extent[0])/self.res)))
-                yj.append(int(round((self.extent[3]-y)/self.res)))
+                xi.append(int(round(abs(x-x0)/self.dx))+1)
+                yj.append(int(round(abs(y-y0)/self.dy))+1)
             else:
-                xi.append(int(round((x-self.extent[0])/self.res))-1)
-                yj.append(int(round((self.extent[3]-y)/self.res))-1)
+                xi.append(int(round(abs(x-x0)/self.dx)))
+                yj.append(int(round(abs(y-y0)/self.dy)))
 
         #Return indices to user (only return lists if user gave list)
         if (len(xi) > 1):
@@ -231,13 +231,7 @@ class GFSANL:
     ### Outputs,
     ###   subset, tuple of ints (y1, y2, x1, x2), array indices corresponding to subsetted region.
     def get_subset(self, extent):
-        
-        #First add 360 to any longitudes that are negative (b/c GFS goes from [0, 360])
-        if (extent[0] < 0):
-            extent[0] = extent[0] + 360
-        if (extent[1] < 0):
-            extent[1] = extent[1] + 360
-            
+                    
         #Now verify that coordinates are in increasing order.
         if (extent[0] > extent[1]): #Longitudes
             dummy = extent[0]
@@ -247,13 +241,11 @@ class GFSANL:
             dummy = extent[2]
             extent[2] = extent[3]
             extent[3] = dummy
-                
-        #Calculate coordinates of each bounding side
-        lon1_ind = int((extent[0]-self.lons[0,0])/self.res)
-        lon2_ind = int((extent[1]-self.lons[0,0])/self.res)
-        lat1_ind = int((self.lats[0,0]-extent[3])/self.res) #Do north first because GFS stores north first.
-        lat2_ind = int((self.lats[0,0]-extent[2])/self.res)
         
+        #Get indice of boundaries
+        lon1_ind, lat1_ind = self.get_point((extent[0], extent[2]))
+        lon2_ind, lat2_ind = self.get_point((extent[1], extent[3]))
+                
         #Return indices (Lats firsts because arrays are ordered [lat, lon])
         return (lat1_ind, lat2_ind, lon1_ind, lon2_ind)
     
@@ -286,16 +278,17 @@ class GFSANL:
                 point = [point]            
                 
             for p in point:
-                print(p)
+
                 #Retrieve grid indices
                 [xind, yind] = self.get_point(p, gcoord=False)
-                print(xind,yind)
+
                 #Create dictionary to hold sounding
                 data = {}
 
                 #Retrieve messages from files
                 for [vn, dk] in zip(var_names, dict_keys):
-                    messages = numpy.atleast_2d(self.get_var(name=vn, typeOfLevel="isobaricInhPa", filedate=filedate))[:,:21] #Stopping sounding at 100hPa because not all variables go all the way up.
+                    messages = self.get_var(name=vn, typeOfLevel="isobaricInhPa", period=period, filedate=filedate)
+                    
                     #Loop over time and layers
                     data[dk] = []
                     dummy = numpy.zeros(messages.shape)
@@ -309,7 +302,7 @@ class GFSANL:
                     data[k] = numpy.atleast_2d(numpy.squeeze(numpy.array(data[k])))
 
                 #Grab pressure levels
-                data["pres"] = numpy.atleast_2d(list(m.level for m in messages[0,:21]))
+                data["pres"] = numpy.atleast_2d(list(m.level for m in messages[0,:]))
 
                 #Calculate dewpoint
                 data["dewp"] = at.dewpoint(at.sat_vaporpres(data["temp"])*(data["dewp"]/100))
@@ -330,7 +323,7 @@ class GFSANL:
 
             #Retrieve messages from files
             for [vn, dk] in zip(var_names, dict_keys):
-                messages = numpy.atleast_2d(self.get_var(name=vn, typeOfLevel="isobaricInhPa", filedate=filedate))[:,:21] #Stopping sounding at 100hPa because not all variables go all the way up.
+                messages = self.get_var(name=vn, typeOfLevel="isobaricInhPa")
                 
                 #Loop over time and layers
                 data[dk] = []
@@ -345,7 +338,7 @@ class GFSANL:
                 data[k] = numpy.atleast_2d(numpy.squeeze(numpy.array(data[k])))
 
             #Grab pressure levels
-            data["pres"] = numpy.atleast_2d(list(m.level for m in messages[0,:21]))
+            data["pres"] = numpy.atleast_2d(list(m.level for m in messages[0,:]))
 
             #Calculate dewpoint
             data["dewp"] = at.dewpoint(at.sat_vaporpres(data["temp"])*(data["dewp"]/100))
@@ -386,23 +379,14 @@ class GFSANL:
             tstart = period[0]
             tend = period[1]
         
-        #Loop over each file in GFS dataset
+        #List to hold data
         vars = []
-        for f in self.files:
-            #Open file
-            grib = pygrib.open(f)
-            
-            #Grab file date
-            date = grib[1].validDate
-            
-            #Skip file if outside analysis period
-            if (((date < tstart) or (date > tend)) and (filedate == None)):
-                grib.close()
-                continue
-            elif ((filedate != None) and (date != filedate)):
-                grib.close()
-                continue
-
+        
+        #If grabbing a single file, jump straight to it.
+        if (filedate != None):
+            grib = pygrib.open(self.hrrrpath+filedate.strftime(self.hrrrname))
+                
+            #Pull the data            
             #First test that appropriate inputs are given
             if ((name == None) and (level == None)): #No name or level
                 print("ERROR: Must pass at one of name or level.")
@@ -415,12 +399,48 @@ class GFSANL:
                 vars.append(grib.select(name=name, level=level, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
             else: #Name and level but returning the messages themselves
                 vars.append(grib.select(name=name, level=level, **kwords))
-     
+                
+            #Close the file
+            grib.close()
+            
+            #Return the data
+            return numpy.squeeze(numpy.array(vars))
+        
+        #Loop over each file in hrrr dataset
+        for f in self.files:
+
+            #Open file
+            grib = pygrib.open(f)
+            
+            #Grab file date
+            date = grib[1].validDate
+            
+            #Skip file if outside analysis period
+            if ((date < tstart) and (filedate == None)):
+                grib.close()
+                continue
+            elif ((filedate != None) and (date != filedate)):
+                grib.close()
+                continue
+        
+            #First test that appropriate inputs are given
+            if ((name == None) and (level == None)): #No name or level
+                print("ERROR: Must pass at one of name or level.")
+                raise ValueError("Must pass at least name or level.")
+            elif ((name != None) and (level == None)): #Only name
+                vars.append(grib.select(name=name, **kwords))
+            elif ((name == None) and (level != None)): #Only level
+                vars.append(grib.select(level=level, **kwords))
+            elif values: #Name, level, and requesting values only
+                vars.append(grib.select(name=name, level=level, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
+            else: #Name and level but returning the messages themselves
+                vars.append(grib.select(name=name, level=level, **kwords))
+                                
             #Close file
             grib.close()
-
-            #If filedate set, then break from loop after pulling that file
-            if (filedate != None):
+            
+            #Break loop once past analysis period
+            if (date > tend):
                 break
             
         #Return data
@@ -429,7 +449,7 @@ class GFSANL:
     ### Method to contour variable at specific model level and time
     ### Inputs:
     ###  var, string, name of variable to map
-    ###  level, integer, GFS level to plot variable on
+    ###  level, integer, hrrr level to plot variable on
     ###  date, datetime object, date of file to to plot
     ###
     ### Outputs:
@@ -441,7 +461,7 @@ class GFSANL:
         
         ### Make the map
         #Create figure and axis
-        fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.proj})
+        fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.pcp})
         
         #Contour
         cont = ax.contourf(self.rlons, self.rlats, data, transform=self.pcp)
@@ -464,7 +484,7 @@ class GFSANL:
     
     ### Method to plot analysis region
     ### Inputs:
-    ###   gid=, integer, optional, GFS grid to plot. Defaults to 1. There is only 1.
+    ###   gid=, integer, optional, hrrr grid to plot. Defaults to 1. There is only 1.
     ###   lc=, boolean, optional, Flag to include land cover imagery. Defaults to False.
     ###   points=, list of tuples, optional, tuples of lon/lat pairs.
     ###
@@ -474,7 +494,7 @@ class GFSANL:
         
         ### Plot subset region
         #Create figure and axis objects
-        fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.proj})
+        fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.pcp})
         
         #Add continents and states
         ax.coastlines()
@@ -490,7 +510,7 @@ class GFSANL:
             gl.xformatter = cmg.LONGITUDE_FORMATTER
             gl.yformatter = cmg.LATITUDE_FORMATTER
             
-        else: #If no analysis region is set (i.e. working with full GFS domain)
+        else: #If no analysis region is set (i.e. working with full hrrr domain)
             #Format meridions
             gl.xlocator = mticker.FixedLocator(numpy.linspace(-180, 180, 13))
             ax.set_xticks(numpy.linspace(-150, 180, 12), crs=self.pcp)
@@ -544,214 +564,5 @@ class GFSANL:
         self.rlons = self.lons[self.yind1:self.yind2, self.xind1:self.xind2]
         self.rlats = self.lats[self.yind1:self.yind2, self.xind1:self.xind2]
         
-        #Returning
-        return
-        
-    
-#############################################################
-#---------------------     GFSgrid     ---------------------#
-#############################################################
-### This class contains tools for using GFS grids.
-### It allows for easy visualization of a domain, and mapping user-defined
-### points to the grid.
-### Inputs:
-###   gid, string, the GFS grid you want to visualize ("1.0", "0.5", "0.25")
-###
-### Attributes:
-###  self.lons - GFS longitudes
-###  self.slons - longitude grid clipped to [-180,180]
-###  self.lats - GFS latitudes
-###  self.proj_name - Name of GFS projection
-###  self.proj - Cartopy projection object for GFS grid
-###  self.pcp - Cartopy PlateCarree projection object (for internal use)
-###  self.center_lon - central longitude of GFS projection
-###  self.extent - Extent of GFS domain in GFS projection coordinates
-###  self.nx - Number of x grid points
-###  self.ny - Number of y grid points
-###  self.dx - x grid spacing
-###  self.dy - y grid spacing
-###  self.lat1 - First latitude on grid
-###  self.lat2 - Last latitude on grid
-###  self.lon1 - First longitude on grid
-###  self.lon2 - Last longitude on grid
-###
-### Methods:
-###  __init__(self, gid) - Object constructor
-###  g1p0(self) - Provides data for GFS 1.0 deg grid
-###  g0p5(self) - Provides data for GFS 0.5 deg grid
-###  g1p25(self) - Provides data for GFS 0.25 deg grid
-###  find_point(self, lon, lat) - Finds grid index corresponding to given lon/lat
-###  plot_grid(self, [points], [extent]) - Plots model domain
-class GFSgrid:
-    ### Funtion to construct object
-    def __init__(self, gid):
-        #Call different function based on grid id.
-        #These attach basic grid info to object.
-        setup = {"1.0":self.g1p0, "0.5":self.g0p5, "0.25":self.g0p25}
-        try:
-            setup[gid]()
-        except:
-            print('That was not a valid grid. Options are: "1.0", "0.5", "0.25"')
-            print("Deconstructing object.")
-            del(self)
-
-        #Calculate lon/lats of the grid.
-        #These are 1D arrays forming the rows and columns of the grid.
-        self.lons = numpy.linspace(self.lon1, self.lon2, self.nx)
-        self.lats = numpy.linspace(self.lat1, self.lat2, self.ny)
-
-        #Shift longitude grid for when [-180, 180] is necessary
-        dummy_lons = numpy.linspace(self.lon1, self.lon2, self.nx)
-        dummy_lons[dummy_lons>180] -= 360
-        self.slons = dummy_lons
-
-        #Attach projection information to object
-        self.proj_name = "Global Latitude/Longitude"
-        self.center_lon = (self.lon1+self.lon2)/2
-        self.proj = ccrs.PlateCarree(central_longitude=self.center_lon)
-        self.pcp = ccrs.PlateCarree() #This is for transformations within the object
-
-        #Calculate full domain extent (left, right, bottom, top)
-        (x0, y0) = self.proj.transform_point(self.lon1, self.lat2, self.pcp)
-        (xf, yf) = self.proj.transform_point(self.lon2, self.lat1, self.pcp)
-        self.extent = (x0,xf,y0,yf) #Note that this is in GFS projection coords.
-
-        #Returning
-        return
-
-    ### Function to setup 1.0' grid.
-    def g1p0(self):
-        #Attach basic grid info to object
-        self.nx = 360     #Number of x grid points
-        self.ny = 181     #Number of y grid points
-        self.dx = 1.0     #x grid spacing
-        self.dy = 1.0     #y grid spacing
-        self.lat1 = 90.0  #First latitude on grid
-        self.lat2 = -90.0 #Last latitude on grid
-        self.lon1 = 0.0   #First longitude on grid
-        self.lon2 = 359.0 #Last longitude on grid
-
-        #Returning
-        return
-
-    ### Function to setup 0.5' grid.
-    def g0p5(self):
-        #Attach basic grid info to object
-        self.nx = 720     #Number of x grid points
-        self.ny = 361     #Number of y grid points
-        self.dx = 0.5     #x grid spacing
-        self.dy = 0.5     #y grid spacing
-        self.lat1 = 90.0  #First latitude on grid
-        self.lat2 = -90.0 #Last latitude on grid
-        self.lon1 = 0.0   #First longitude on grid
-        self.lon2 = 359.5 #Last longitude on grid
-
-        #Returning
-        return
-
-    ### Function to setup 0.25' grid
-    def g0p25(self):
-        #Attach basic grid info to object
-        self.nx = 1440     #Number of x grid points
-        self.ny = 721     #Number of y grid points
-        self.dx = 0.25     #x grid spacing
-        self.dy = 0.25     #y grid spacing
-        self.lat1 = 90.0  #First latitude on grid
-        self.lat2 = -90.0 #Last latitude on grid
-        self.lon1 = 0.0   #First longitude on grid
-        self.lon2 = 359.75 #Last longitude on grid
-
-        #Returning
-        return
-
-    ### Funtion to retrieve closest grid point to desired location
-    ### Inputs:
-    ###   lon, float or list of floats, longitude of desired point
-    ###   lat, float or list of floats, latitude of desired point
-    ###
-    ### Outputs:
-    ###   (xi, yj), tuple of ints or list of ints, index of grid point closest to given point
-    ###     xi corresponds to lon; yj corresponds to lat.
-    def get_point(self, lon, lat):
-        #Force lon and lats into lists.
-        #This enables program consistency and user convenience.
-        if not isinstance(lon, list):
-            lon = [lon]
-            lat = [lat]
-
-        #Lists to grid points closest to user points
-        xi = []
-        yj = []
-
-        #Now for each lon/lat pair find the closest domain point.
-        for (ulon, ulat) in zip(lon, lat):
-            #Transform point to GFS projection
-            (x, y) = self.proj.transform_point(ulon, ulat, self.pcp)
-
-            #Check that desired location is within model grid
-            if ((x < self.extent[0]) or (x > self.extent[1]) or (y < self.extent[2]) or (y > self.extent[3])):
-                print("Point Lon: {}, Lat: {}) is outside the model grid. Returning...".format(ulon,ulat))
-                return None
-
-            #Calculate index of each point
-            xi.append(int(round((x-self.extent[0])/self.dx)))
-            yj.append(int(round((self.extent[3]-y)/self.dy)))
-
-        #Return indices to user (only return lists if user gave list)
-        if (len(xi) > 1):
-            return (xi, yj)
-        else:
-            return (xi[0], yj[0])
-
-    ### Function to plot model domain
-    ### Also allows user to determine a sub-extent and plot points
-    ### Inputs:
-    ###  extent=, optional, tuple of floats, (west lon, east lon, south lat, north lat)
-    ###     Note that extent cannot cross the map boundary (i.e. long=0).
-    ###  points=, optional, list of tuples corresponding to lon/lat pairs. (Note the order)
-    def plot_grid(self, extent=None, points=[]):
-
-        #Create figure and axis objects. Also use stock image from cartopy
-        fig, ax = pp.subplots(nrows=1, ncols=1, subplot_kw={"projection":self.proj})
-        ax.stock_img()
-
-        #Add gridlines
-        gl = ax.gridlines(crs=self.pcp, draw_labels=False, linewidth=1, linestyle=":", color="grey")
-
-        if (extent == None): #Only do fancy gridline format for default plot.
-            #Format meridions
-            gl.xlocator = mticker.FixedLocator(numpy.linspace(-180, 180, 13))
-            ax.set_xticks(numpy.linspace(-150, 180, 12), crs=self.pcp)
-            ax.set_xticklabels(numpy.linspace(-150, 180, 12))
-            ax.xaxis.set_major_formatter(cticker.LongitudeFormatter())
-
-            #Format parallels
-            gl.ylocator = mticker.FixedLocator(numpy.linspace(-90, 90, 7))
-            ax.set_yticks(numpy.linspace(-90, 90, 7), crs=self.pcp)
-            ax.set_yticklabels(numpy.linspace(-90, 90, 7))
-            ax.yaxis.set_major_formatter(cticker.LatitudeFormatter())
-        else:
-            gl.xlabels_bottom = True
-            gl.ylabels_left = True
-            gl.xformatter = cmg.LONGITUDE_FORMATTER
-            gl.yformatter = cmg.LATITUDE_FORMATTER
-
-        #Add user defined points
-        for pt in points:
-            #Now plot the point
-            ax.scatter(pt[0], pt[1], color="red", transform=self.pcp)
-
-        #Change map extent if requested
-        if (extent != None):
-            #First must transform extent corners
-            llc = self.proj.transform_point(extent[0], extent[2], self.pcp)
-            urc = self.proj.transform_point(extent[1], extent[3], self.pcp)
-
-            #Now can set extent
-            ax.set_extent((llc[0],urc[0],llc[1],urc[1]), crs=self.proj)
-
-        #Display image
-        pp.show()
-
         #Returning
         return

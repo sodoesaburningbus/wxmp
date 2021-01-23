@@ -4,10 +4,10 @@ from wxmp.wrf import WRFgrid
 from wxmp.wrf import WRFANL
 
 #Namelist to read in
-namelist = "/rstor/cphillip/operational_wrf/model/WPS/namelist.wps"
+namelist = "/rstor/cphillip/wrf39_chem/WPS/namelist.wps"
 
 #Directory containing WRF output
-wrfdir = "/rstor/cphillip/operational_wrf/model/WRF/"
+wrfdir = "/rstor/cphillip/model_exps/atlantic_dust/output_20170702/euro/dusty/"
 
 #Creating WRF grid object
 grid = WRFgrid(namelist)
@@ -47,4 +47,4 @@ tstart = sim.start_of_sim + dt.timedelta(hours=24)
 sim.set_period(tstart, sim.end_of_sim)
 
 #Create radar loop (and label grid center)
-sim.radar_loop("./", point=clist[sim.cg-1])
+#sim.radar_loop("./", point=clist[sim.cg-1])
