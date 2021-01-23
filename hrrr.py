@@ -35,15 +35,25 @@ class HRRRANL:
     ### Inputs:
     ###  hrrrpath, string, full path to directory containing hrrr files
     ###  hrrrpre, string, optional, prefix to hrrr files, defaults to none
-    def __init__(self, hrrrpath, hrrrpre=None):
+    def __init__(self, hrrrpath, hrrrpre=None, hrrrname=None):
     
         ### Setup hrrr file prefix
         ### If statement supports wxmpi compatibility
         if (hrrrpre == None):
-            hrrrpre = ""
+            self.hrrrpre = ""
+            
+        ### Setup naming structure of HRRR files (needed for grabbing files by date)
+        if (hrrrname == None):
+            self.hrrrname = "hrrr.%Y%m%d.t%Hz.wrfprsf00.grib2"
+            
+        ### Store path to files
+        if (hrrrpath[-1] == "/"):
+            self.hrrrpath = hrrrpath
+        else:
+            self.hrrrpath = hrrrpath+"/"
     
         ### Locate all files
-        self.files = sorted(glob.glob(hrrrpath+"/{}*".format(hrrrpre)))
+        self.files = sorted(glob.glob(self.hrrrpath+"/{}*".format(self.hrrrpre)))
                         
         #Extract message table from first file
         grib = pygrib.open(self.files[0])
@@ -97,16 +107,11 @@ class HRRRANL:
         #Close grib file
         grib.close()
                 
-        #Grab dates of all the analysis files
-        self.valid_dates = []
-        for f in self.files[0:]:
-            grib = pygrib.open(f)
-            self.valid_dates.append(grib[1].validDate)
-            grib.close()
-
         #Get end time of dataset
-        self.end_of_sim = self.valid_dates[-1]
-
+        grib = pygrib.open(self.files[-1])
+        self.end_of_sim = grib[1].validDate
+        grib.close()
+        
         #Set period of analysis to simulation period
         self.set_anl_period(self.start_of_sim, self.end_of_sim)
         
@@ -173,7 +178,6 @@ class HRRRANL:
             
         #Return values as numpy array
         return numpy.array(vars)
-    
 
     ### Method to retrieve closest grid point to desired location
     ### Inputs:
@@ -182,7 +186,8 @@ class HRRRANL:
     ### Outputs:
     ###   (xi, yj), tuple of ints or list of ints, index of grid point closest to given point
     ###     xi corresponds to lon; yj corresponds to lat.
-    def get_point(self, point, gcoord=True):
+    def get_point(self, point, gcoord=False):
+    
         #Force lon and lats into lists.
         #This enables program consistency and user convenience.
         if not isinstance(point, list):
@@ -192,11 +197,13 @@ class HRRRANL:
         xi = []
         yj = []
 
+        #Grab first domain point
+        (x0, y0) = self.proj.transform_point(self.lons[0,0], self.lats[0,0], self.pcp)
+
         #Now for each lon/lat pair find the closest domain point.
         for (ulon, ulat) in point:
             #Transform point to hrrr projection
             (x, y) = self.proj.transform_point(ulon, ulat, self.pcp)
-            (x0, y0) = self.proj.transform_point(self.lons[0,0], self.lats[0,0], self.pcp)
 
             #Check that desired location is within model grid
             if ((ulon < self.extent[0]) or (ulon > self.extent[1]) or (ulat < self.extent[2]) or (ulat > self.extent[3])):
@@ -204,11 +211,11 @@ class HRRRANL:
 
             #Calculate index of each point
             if gcoord:
+                xi.append(int(round(abs(x-x0)/self.dx))+1)
+                yj.append(int(round(abs(y-y0)/self.dy))+1)
+            else:
                 xi.append(int(round(abs(x-x0)/self.dx)))
                 yj.append(int(round(abs(y-y0)/self.dy)))
-            else:
-                xi.append(int(round(abs(x-x0)/self.dx))-1)
-                yj.append(int(round(abs(y-y0)/self.dy))-1)
 
         #Return indices to user (only return lists if user gave list)
         if (len(xi) > 1):
@@ -280,7 +287,7 @@ class HRRRANL:
 
                 #Retrieve messages from files
                 for [vn, dk] in zip(var_names, dict_keys):
-                    messages = self.get_var(name=vn, typeOfLevel="isobaricInhPa")
+                    messages = self.get_var(name=vn, typeOfLevel="isobaricInhPa", period=period, filedate=filedate)
                     
                     #Loop over time and layers
                     data[dk] = []
@@ -372,8 +379,34 @@ class HRRRANL:
             tstart = period[0]
             tend = period[1]
         
-        #Loop over each file in hrrr dataset
+        #List to hold data
         vars = []
+        
+        #If grabbing a single file, jump straight to it.
+        if (filedate != None):
+            grib = pygrib.open(self.hrrrpath+filedate.strftime(self.hrrrname))
+                
+            #Pull the data            
+            #First test that appropriate inputs are given
+            if ((name == None) and (level == None)): #No name or level
+                print("ERROR: Must pass at one of name or level.")
+                raise ValueError("Must pass at least name or level.")
+            elif ((name != None) and (level == None)): #Only name
+                vars.append(grib.select(name=name, **kwords))
+            elif ((name == None) and (level != None)): #Only level
+                vars.append(grib.select(level=level, **kwords))
+            elif values: #Name, level, and requesting values only
+                vars.append(grib.select(name=name, level=level, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
+            else: #Name and level but returning the messages themselves
+                vars.append(grib.select(name=name, level=level, **kwords))
+                
+            #Close the file
+            grib.close()
+            
+            #Return the data
+            return numpy.squeeze(numpy.array(vars))
+        
+        #Loop over each file in hrrr dataset
         for f in self.files:
 
             #Open file
@@ -383,7 +416,7 @@ class HRRRANL:
             date = grib[1].validDate
             
             #Skip file if outside analysis period
-            if (((date < tstart) or (date > tend)) and (filedate == None)):
+            if ((date < tstart) and (filedate == None)):
                 grib.close()
                 continue
             elif ((filedate != None) and (date != filedate)):
@@ -402,9 +435,13 @@ class HRRRANL:
                 vars.append(grib.select(name=name, level=level, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
             else: #Name and level but returning the messages themselves
                 vars.append(grib.select(name=name, level=level, **kwords))
-                
+                                
             #Close file
             grib.close()
+            
+            #Break loop once past analysis period
+            if (date > tend):
+                break
             
         #Return data
         return numpy.squeeze(numpy.array(vars))
