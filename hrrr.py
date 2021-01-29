@@ -1,5 +1,4 @@
-#This module contains classes for visualizing the various hrrr products.
-#Currently, three grids are handled, 0.25, 0.5, and 1.0 degree grids.
+#This module contains classes for visualizing the various HRRR products.
 #Written by Christopher Phillips, February 2020
 #University of Alabama in Huntsville
 #Atmospheric and Earth Science Department
@@ -35,16 +34,15 @@ class HRRRANL:
     ### Inputs:
     ###  hrrrpath, string, full path to directory containing hrrr files
     ###  hrrrpre, string, optional, prefix to hrrr files, defaults to none
-    def __init__(self, hrrrpath, hrrrpre=None, hrrrname=None):
+    ###  hrrrname, string, optional, naming structure for HRRR. Used for determing analysis valid times.
+    ###     can set to None to manually check the time of each file, but doing so is very slow.
+    def __init__(self, hrrrpath, hrrrpre="", hrrrname="hrrr.%Y%m%d.t%Hz.wrfprsf00.grib2"):
     
-        ### Setup hrrr file prefix
-        ### If statement supports wxmpi compatibility
-        if (hrrrpre == None):
-            self.hrrrpre = ""
+        ### Setup HRRR file prefix
+        self.hrrrpre = hrrrpre
             
         ### Setup naming structure of HRRR files (needed for grabbing files by date)
-        if (hrrrname == None):
-            self.hrrrname = "hrrr.%Y%m%d.t%Hz.wrfprsf00.grib2"
+        self.hrrrname = hrrrname
             
         ### Store path to files
         if (hrrrpath[-1] == "/"):
@@ -182,6 +180,9 @@ class HRRRANL:
     ### Method to retrieve closest grid point to desired location
     ### Inputs:
     ###   point, tuple of floats, (lon, lat) or list of tuples of such points.
+    ###   gcoord, optional, boolean, whether to return grid relative indices regardless
+    ###                     of subsetting. Default=False, so indices relative to subsetted
+    ###                     grid are returned.
     ###
     ### Outputs:
     ###   (xi, yj), tuple of ints or list of ints, index of grid point closest to given point
@@ -207,15 +208,15 @@ class HRRRANL:
 
             #Check that desired location is within model grid
             if ((ulon < self.extent[0]) or (ulon > self.extent[1]) or (ulat < self.extent[2]) or (ulat > self.extent[3])):
-                raise ValueError("Point Lon: {}, Lat: {} is outside the model grid.".format(ulon,ulat))
+                raise ValueError("Point Lon: {}, Lat: {} is outside the analysis grid.".format(ulon,ulat))
 
             #Calculate index of each point
             if gcoord:
-                xi.append(int(round(abs(x-x0)/self.dx))+1)
-                yj.append(int(round(abs(y-y0)/self.dy))+1)
-            else:
                 xi.append(int(round(abs(x-x0)/self.dx)))
                 yj.append(int(round(abs(y-y0)/self.dy)))
+            else:
+                xi.append(int(round(abs(x-x0)/self.dx))-self.xind1)
+                yj.append(int(round(abs(y-y0)/self.dy))-self.yind1)
 
         #Return indices to user (only return lists if user gave list)
         if (len(xi) > 1):
@@ -243,8 +244,8 @@ class HRRRANL:
             extent[3] = dummy
         
         #Get indice of boundaries
-        lon1_ind, lat1_ind = self.get_point((extent[0], extent[2]))
-        lon2_ind, lat2_ind = self.get_point((extent[1], extent[3]))
+        lon1_ind, lat1_ind = self.get_point((extent[0], extent[2]), gcoord=True)
+        lon2_ind, lat2_ind = self.get_point((extent[1], extent[3]), gcoord=True)
                 
         #Return indices (Lats firsts because arrays are ordered [lat, lon])
         return (lat1_ind, lat2_ind, lon1_ind, lon2_ind)
@@ -280,7 +281,7 @@ class HRRRANL:
             for p in point:
 
                 #Retrieve grid indices
-                [xind, yind] = self.get_point(p, gcoord=False)
+                [xind, yind] = self.get_point(p, gcoord=True)
 
                 #Create dictionary to hold sounding
                 data = {}
@@ -382,31 +383,35 @@ class HRRRANL:
         #List to hold data
         vars = []
         
-        #If grabbing a single file, jump straight to it.
-        if (filedate != None):
-            grib = pygrib.open(self.hrrrpath+filedate.strftime(self.hrrrname))
+        #Test that a file name structure was provided
+        if (self.hrrrname != None):
+        
+            #If grabbing a single file, jump straight to it.
+            if (filedate != None):
+                grib = pygrib.open(self.hrrrpath+filedate.strftime(self.hrrrname))
+                    
+                #Pull the data            
+                #First test that appropriate inputs are given
+                if ((name == None) and (level == None)): #No name or level
+                    print("ERROR: Must pass at one of name or level.")
+                    raise ValueError("Must pass at least name or level.")
+                elif ((name != None) and (level == None)): #Only name
+                    vars.append(grib.select(name=name, **kwords))
+                elif ((name == None) and (level != None)): #Only level
+                    vars.append(grib.select(level=level, **kwords))
+                elif values: #Name, level, and requesting values only
+                    vars.append(grib.select(name=name, level=level, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
+                else: #Name and level but returning the messages themselves
+                    vars.append(grib.select(name=name, level=level, **kwords))
+                    
+                #Close the file
+                grib.close()
                 
-            #Pull the data            
-            #First test that appropriate inputs are given
-            if ((name == None) and (level == None)): #No name or level
-                print("ERROR: Must pass at one of name or level.")
-                raise ValueError("Must pass at least name or level.")
-            elif ((name != None) and (level == None)): #Only name
-                vars.append(grib.select(name=name, **kwords))
-            elif ((name == None) and (level != None)): #Only level
-                vars.append(grib.select(level=level, **kwords))
-            elif values: #Name, level, and requesting values only
-                vars.append(grib.select(name=name, level=level, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
-            else: #Name and level but returning the messages themselves
-                vars.append(grib.select(name=name, level=level, **kwords))
-                
-            #Close the file
-            grib.close()
-            
-            #Return the data
-            return numpy.squeeze(numpy.array(vars))
+                #Return the data
+                return numpy.squeeze(numpy.array(vars))
         
         #Loop over each file in hrrr dataset
+        #This code only fires if the user set the naming structure to None.
         for f in self.files:
 
             #Open file
@@ -553,16 +558,16 @@ class HRRRANL:
         
         #First set subset flag to True. This turns on subsetting behavior for data functions.
         self.subset = True
-        
-        #Now store the analysis extent
-        self.extent = extent
-        
+                
         #Now pull the necessary indices for subsetting
         [self.yind1, self.yind2, self.xind1, self.xind2] = self.get_subset(extent)
         
         #Create lats and lats for analysis region
         self.rlons = self.lons[self.yind1:self.yind2, self.xind1:self.xind2]
         self.rlats = self.lats[self.yind1:self.yind2, self.xind1:self.xind2]
+        
+        #Now store the analysis extent
+        self.extent = (self.rlons.min(), self.rlons.max(), self.rlats.min(), self.rlats.max())
         
         #Returning
         return
