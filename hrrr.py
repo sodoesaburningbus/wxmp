@@ -59,7 +59,11 @@ class HRRRANL:
         self.valid_dates = []
         if (self.hrrrname != None):
             for f in self.files:
-                self.valid_dates.append(datetime.strptime(f.split("/")[-1], self.hrrrname))
+                try:
+                    self.valid_dates.append(datetime.strptime(f.split("/")[-1], self.hrrrname))
+                except:
+                    raise Exception("HRRR file {} not match hrrrname: {}".format(f.split("/")[-1],
+                        self.hrrrname))
         else:
             for f in self.files:
                 grib = pygrib.open(f)
@@ -149,6 +153,60 @@ class HRRRANL:
 
         #Returning
         return
+
+    ### Method to locate LLJs within the HRRR analysis domain
+    ### Inputs:
+    ###   filedate, datetime object, desired date of LLJ map_var
+    ### Outputs:
+    ###   llj_map, 2d numpy array of integers, LLJ category following that of Yang et al.
+    ###     in their 2020 Climate Dynamics paper "Understanding irrigation impacts on low-
+    ###     level jets over the Great Plains"
+    def find_lljs(self, filedate):
+
+        #Dummy lists to hold variables while building 3d arrays
+        uwinds = []
+        vwinds = []
+
+        #Loop over pressure levels
+        for p in sorted(self.level_list["isobaricInhPa"])[::-1]:
+
+            #Break loop if above the 700 hPa level
+            if (p < 700):
+                break
+
+            #Grab the wind speeds
+            uwinds.append(self.get_var(name="U component of wind",
+                level=p, filedate=filedate, values=True))
+            vwinds.append(self.get_var(name="V component of wind",
+                level=p, filedate=filedate, values=True))
+
+        #Convert lists to arrays
+        uwinds = numpy.array(uwinds)
+        vwinds = numpy.array(vwinds)
+
+        #Compute total wind
+        twind = numpy.sqrt(uwinds**2+vwinds**2)
+        #Identify the maximum and minimum wind speeds at each point
+        maxind = numpy.argmax(twind, axis=0)
+        maxwind = numpy.max(twind, axis=0)
+
+        #Allocate array for minimum wind speed
+        #Need to loop, since too memory intensive otherwise
+        minwind = numpy.zeros(maxwind.shape)
+        for i in range(maxind.shape[0]):
+            for j in range(maxind.shape[1]):
+                    ind = maxind[i,j] #The minimum must lie above the maximum for LLJ.
+                    minwind[i,j] = numpy.min(twind[ind:,i,j])
+
+        #Compute LLJ category following Yang et al.
+        cat3 = (maxwind >= 20) & (maxwind-minwind >= 10)
+        cat2 = (maxwind >= 16) & (maxwind-minwind >= 8)
+        cat1 = (maxwind >= 12) & (maxwind-minwind >= 6)
+        cat0 = (maxwind >= 10) & (maxwind-minwind >= 5)
+        llj_map = numpy.sum(numpy.array([cat3, cat2, cat1, cat0], dtype="int"), axis=0)-1
+
+        #Return the category map
+        return llj_map
 
     ### Method to pull the data for a particular GRIB2 message by number
     ### Inputs:
