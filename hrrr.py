@@ -642,14 +642,17 @@ class HRRRANL:
     ###   rvwind, rotated meridional wind field
     def rotate_winds(self, uwind, vwind, lons):
         
-        #Rotate the gridded winds to the Earth frame and store in lists
+        #Calculate angles for rotation
         angle = 0.622515*(lons+97.5)*0.017453
         sinx = numpy.sin(angle)
         cosx = numpy.cos(angle)
 
-        #Geostrophic winds
+        #Rotate the winds
         ruwind = cosx*uwind+sinx*vwind
         rvwind = -sinx*uwind+cosx*vwind
+        
+        #Return rotated winds
+        return ruwind, rvwind
     
     ### Method to set working time period
     ### Inputs:
