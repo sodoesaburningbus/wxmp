@@ -631,6 +631,26 @@ class HRRRANL:
         #Returning
         return (fig, ax)
 
+    ### Method to rotate HRRR winds to Earth coordinate frame
+    ### Based on https://rapidrefresh.noaa.gov/faq/HRRR.faq.html
+    ### Inputs:
+    ###   uwind, numpy nD array, zonal wind field
+    ###   vwind, numpy nD array, meridional wind field
+    ###   lons, numpy nD array, longitude coordinates
+    ### Outputs:
+    ###   ruwind, rotated zonal wind field
+    ###   rvwind, rotated meridional wind field
+    def rotate_winds(self, uwind, vwind, lons):
+        
+        #Rotate the gridded winds to the Earth frame and store in lists
+        angle = 0.622515*(lons+97.5)*0.017453
+        sinx = numpy.sin(angle)
+        cosx = numpy.cos(angle)
+
+        #Geostrophic winds
+        ruwind = cosx*uwind+sinx*vwind
+        rvwind = -sinx*uwind+cosx*vwind
+    
     ### Method to set working time period
     ### Inputs:
     ###   tstart, datetime object, start of simulation period to be analyzed
