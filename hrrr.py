@@ -267,7 +267,7 @@ class HRRRANL:
         yj = []
 
         #Grab first domain point
-        (x0, y0) = self.proj.transform_point(self.lons[0,0], self.lats[0,0], self.pcp)
+        (x0, y0) = self.proj.transform_point(self.rlons[0,0], self.rlats[0,0], self.pcp)
 
         #Now for each lon/lat pair find the closest domain point.
         for (ulon, ulat) in point:
