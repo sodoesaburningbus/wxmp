@@ -10,9 +10,9 @@ from datetime import datetime as dt
 start_date = dt.strptime("20160618", "%Y%m%d")
 end_date = dt.strptime("20160621", "%Y%m%d")
 
-#Password and username
-username = "cphillips574"
-password = "V3Betredr"
+#Password and username to NASA GESDISC ESODIS server
+username = "your_username"
+password = "your_password"
 
 #Create merra analysis object
 merra = wm.MERANL(username, password, start_date, end_date, "atmosphere")
