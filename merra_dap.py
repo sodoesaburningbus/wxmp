@@ -123,9 +123,6 @@ class MERANL:
                 #Break to next date on successful load
                 break
 
-        #Close the session
-        del(session)
-
         #Store variables
         self.var_list = sorted(list(self.dataset[0].keys()))
 

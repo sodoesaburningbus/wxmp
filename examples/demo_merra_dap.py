@@ -3,6 +3,7 @@
 
 #Import required modules
 from wxmp import merra_dap as wm
+import matplotlib.pyplot as pp
 from datetime import datetime as dt
 
 #Create test dates
@@ -53,5 +54,13 @@ print("All time var shape: {}".format(var.shape))
 #Now grab a variable for a specific time
 var = merra.get_var(merra.variables[0], filedate=dt.strptime("2016060708", "%Y%m%d%H"))
 print("Single time var shape: {}".format(var.shape))
+
+#Plot a quick map
+fig, ax = pp.subplots(subplot_kw={"projection":merra.pcp})
+ax.contourf(merra.rlons, merra.rlats, var)
+ax.coastlines()
+cb = fig.colorbar(cont=cont, orientation="horizontal")
+cb.set_label(merra.variables, fontsize=14, fontweight="bold")
+pp.show()
 
 print("TEST SUCCESSFUL")
