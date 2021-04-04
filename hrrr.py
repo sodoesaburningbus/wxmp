@@ -454,7 +454,7 @@ class HRRRANL:
             tend = period[1]
 
         #Ensure the period is in increasing order
-        if (tstart >= tend):
+        if (tstart > tend):
             raise ValueError("Given period must be in increasing order!")
 
         #Check that period is within analysis period
