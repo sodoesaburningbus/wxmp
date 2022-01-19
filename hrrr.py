@@ -101,7 +101,7 @@ class HRRRANL:
         self.disable_subset()
 
         #Attach projection information to object
-        self.proj_name = "Lambert COnformal"
+        self.proj_name = "Lambert Conformal"
         self.center_lon = (self.lons.min()+self.lons.max())/2
         self.proj = ccrs.LambertConformal(central_longitude=self.center_lon)
         self.pcp = ccrs.PlateCarree() #This is for transformations within the object
@@ -430,8 +430,8 @@ class HRRRANL:
 
     ### Method to retrieve messages by name and level
     ### Inputs: (either is optional, but at least one is required)
-    ###   name=, string, optional, name of variable to retrieve
-    ###   level=, integer, optional, level of variable to retrieve
+    ###   name=, string, optional, name of variable to retrieve. Can be a list of names.
+    ###   level=, integer, optional, level of variable to retrieve. Can be a list of levels.
     ###   mn=, integer, optional, grib message number. Name or level overrides this. Only works with values=True.
     ###   values=, boolean, optional, if only one message whether to return the values
     ###     instead of the full message. Defaults to True.
@@ -439,11 +439,34 @@ class HRRRANL:
     ###   filedate, datetime object, optional, date of file to pull. (Only retreives one file's data if set).
     ### Outputs:
     ###   vars, array of messages that match given criteria for each file in dataset. First index is Time.
+    ###     if a list of names and levels is given, then vars is a dictionary holding one array for each entry in the list.
     def get_var(self, name=None, level=None, mn=None, values=True, period=None, filedate=None, **kwords):
 
         #Check that user is not requesting both a period and a specific date
         if ((period != None) and (filedate != None)):
             raise Exception("Cannot request both a period and a specific date!")
+
+        #Check for lists
+        if (isinstance(name, list) and isinstance(level, list)):
+        
+            if (len(name) != len(level)):
+                raise Exception("Lists of names and levels must have same number of elements!")
+        
+            vars = {}
+            for n in name:
+                vars[n] = []
+            list_flag = True
+        
+        elif isinstance(level, list):
+            raise Exception("Must give both name and level as lists for list functionality!")
+        
+        elif isinstance(name, list):
+            raise Exception("Must give both name and level as lists for list functionality!")
+        
+        else:
+            vars = []
+            list_flag = False
+        
 
         #Determine time period to retreive variables over
         if (period == None):
@@ -462,27 +485,37 @@ class HRRRANL:
             raise ValueError("Period {} to {} is not within analysis period {} to {}".format(
                 tstart, tend, self.start_of_anl, self.end_of_anl))
 
-        #List to hold data
-        vars = []
-
         #If grabbing a single file, just open it
         if (filedate != None):
             self.open_grib(filedate)
+            
+            if list_flag:
+            
+                for n, l in zip(name, level):
+                
+                    #Pull the data
+                    #First test that appropriate inputs are given
+                    if values: #Name, level, and requesting values only
+                        vars[n].append(self.grib.select(name=n, level=l, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
+                    else: #Name and level but returning the messages themselves
+                        vars[n].append(self.grib.select(name=n, level=l, **kwords))
 
-            #Pull the data
-            #First test that appropriate inputs are given
-            if ((name == None) and (level == None) and (mn == None)): #No name or level
-                raise Exception("Must pass at least name, level, or message number.")
-            elif ((name != None) and (level == None)): #Only name
-                vars.append(self.grib.select(name=name, **kwords))
-            elif ((name == None) and (level != None)): #Only level
-                vars.append(self.grib.select(level=level, **kwords))
-            elif (mn != None):
-                vars.append(self.grib[mn].values[self.yind1:self.yind2, self.xind1:self.xind2])
-            elif values: #Name, level, and requesting values only
-                vars.append(self.grib.select(name=name, level=level, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
-            else: #Name and level but returning the messages themselves
-                vars.append(self.grib.select(name=name, level=level, **kwords))
+            else:
+            
+                #Pull the data
+                #First test that appropriate inputs are given
+                if ((name == None) and (level == None) and (mn == None)): #No name or level
+                    raise Exception("Must pass at least name, level, or message number.")
+                elif ((name != None) and (level == None)): #Only name
+                    vars.append(self.grib.select(name=name, **kwords))
+                elif ((name == None) and (level != None)): #Only level
+                    vars.append(self.grib.select(level=level, **kwords))
+                elif (mn != None):
+                    vars.append(self.grib[mn].values[self.yind1:self.yind2, self.xind1:self.xind2])
+                elif values: #Name, level, and requesting values only
+                    vars.append(self.grib.select(name=name, level=level, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
+                else: #Name and level but returning the messages themselves
+                    vars.append(self.grib.select(name=name, level=level, **kwords))
 
             #Return the data
             return numpy.squeeze(numpy.array(vars))
@@ -498,19 +531,30 @@ class HRRRANL:
             #Open the file (Don't reset the current file while looping through a period.)
             grib = pygrib.open(f)
 
-            #First test that appropriate inputs are given
-            if ((name == None) and (level == None) and (mn == None)): #No name or level
-                raise Exception("Must pass at least name, level, or message number.")
-            elif ((name != None) and (level == None)): #Only name
-                vars.append(grib.select(name=name, **kwords))
-            elif ((name == None) and (level != None)): #Only level
-                vars.append(grib.select(level=level, **kwords))
-            elif (mn != None):
-                vars.append(self.grib[mn].values[self.yind1:self.yind2, self.xind1:self.xind2])
-            elif values: #Name, level, and requesting values only
-                vars.append(grib.select(name=name, level=level, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
-            else: #Name and level but returning the messages themselves
-                vars.append(grib.select(name=name, level=level, **kwords))
+            if list_flag:
+            
+                for n, l in zip(name, level):
+               
+                    if values: #Name, level, and requesting values only
+                        vars[n].append(grib.select(name=n, level=l, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
+                    else: #Name and level but returning the messages themselves
+                        vars[n].append(grib.select(name=n, level=l, **kwords))
+                
+            else:
+
+                #First test that appropriate inputs are given
+                if ((name == None) and (level == None) and (mn == None)): #No name or level
+                    raise Exception("Must pass at least name, level, or message number.")
+                elif ((name != None) and (level == None)): #Only name
+                    vars.append(grib.select(name=name, **kwords))
+                elif ((name == None) and (level != None)): #Only level
+                    vars.append(grib.select(level=level, **kwords))
+                elif (mn != None):
+                    vars.append(self.grib[mn].values[self.yind1:self.yind2, self.xind1:self.xind2])
+                elif values: #Name, level, and requesting values only
+                    vars.append(grib.select(name=name, level=level, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
+                else: #Name and level but returning the messages themselves
+                    vars.append(grib.select(name=name, level=level, **kwords))
 
             #Close the file
             grib.close()
@@ -520,7 +564,12 @@ class HRRRANL:
                 break
 
         #Return data
-        return numpy.squeeze(numpy.array(vars))
+        if list_flag:
+            for n in name:
+                vars[n] = numpy.squeeze(numpy.array(vars[n]))
+            return vars
+        else:
+            return numpy.squeeze(numpy.array(vars))
 
     ### Method to contour variable at specific model level and time
     ### Inputs:

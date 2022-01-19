@@ -590,14 +590,14 @@ class WRFANL:
                 if self.subset: #Subset the data
                     for vl in var_labels: #Loop over each variable
                             if (point == None): #Grab variable over region
-                                try: #2D case
+                                if (fn.variables[vl].ndim == 3): #2D case (because time axis)
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,self.yind1:self.yind2,self.xind1:self.xind2]))
-                                except: #3D case
+                                else: #3D case
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,self.yind1:self.yind2,self.xind1:self.xind2]))
                             else: #Grab var at a point
-                                try: #2D case
+                                if (fn.variables[vl].ndim == 3): #2D case (because time axis)
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,yind,xind]))
-                                except: #3D case
+                                else: #3D case
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,yind,xind]))
 
                 else: #No subsetting of data
@@ -605,15 +605,17 @@ class WRFANL:
                             if (point == None): #Grab variable over region
                                 vars[vl].append(numpy.squeeze(fn.variables[vl]))
                             else: #Grab var at a point
-                                try: #2D case
+                                if (fn.variables[vl].ndim == 3): #2D case (because time axis)
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,yind,xind]))
-                                except: #3D case
-                                    vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,yind,xind]))               
+                                else: #3D case #3D case
+                                    try:
+                                        vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,yind,xind]))
+                                    except: #1D case like XTIME
+                                        vars[vl].append(numpy.squeeze(fn.variables[vl][:]))
             
             except Exception as err:
                 fn.close()
-                print(err)
-                raise Exception
+                raise Exception(err)
     
             #Close file
             fn.close()
@@ -1122,7 +1124,7 @@ class WRFANL:
 class WRFgrid:
     ### Method to construct object
     ### Inputs:
-    ###   namelist, string, path to WRF namelist file to be read in
+    ###   namelist, string, path to WPS namelist file to be read in
     def __init__(self, namelist):
         
         #First thing is to open WRF namelist file
@@ -1267,6 +1269,8 @@ class WRFgrid:
             
         #Add map features
         ax.coastlines()
+        ax.add_feature(cfeature.STATES)
+        ax.add_feature(cfeature.BORDERS)
         gl = ax.gridlines(color="black", linestyle="--", draw_labels=False)
         
         #Now add interior domains
