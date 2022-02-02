@@ -172,7 +172,7 @@ class WRFSCM:
         sounding = []
 
         #Retreive data
-        data = self.get_var(["T", "P", "PB", "QVAPOR", "U", "V", "SINALPHA", "COSALPHA"], period=(tstart, tend), anldate=anldate)
+        data = self.get_var(["T", "P", "PB", "QVAPOR", "U", "V", "SINALPHA", "COSALPHA", "PHB", "PH"], period=(tstart, tend), anldate=anldate)
 
         #Calculate actual temperature and pressure
         ptemp = data["T"]+300.0 #Add WRF base temp to variable
@@ -190,10 +190,13 @@ class WRFSCM:
             uwind = data["U"]*data["COSALPHA"]-data["V"]*data["SINALPHA"]
             vwind = data["V"]*data["COSALPHA"]+data["U"]*data["SINALPHA"]
 
+        # Compute height
+        height = (data["PHB"]+data["PH"])/at.G
+
         #Append sounding to list
         sounding.append({"temp":numpy.atleast_2d(temp), "pres":numpy.atleast_2d(pres/100.0),
             "dewp":numpy.atleast_2d(dewp), "uwind":numpy.atleast_2d(uwind),
-            "vwind":numpy.atleast_2d(vwind)})
+            "vwind":numpy.atleast_2d(vwind), "height":numpy.atleast_2d(height)})
 
         #Return soundings as list
         #or as dictionary if only one.

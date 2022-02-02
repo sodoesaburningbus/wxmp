@@ -267,12 +267,12 @@ class GFSANL:
     ### Outputs:
     ###   sounding, dictionary of lists containing sounding info, or list of such dictionaries with len(points)
     ###     dictionaries are keyed ["temp", "pres", "dewp", "uwind", "vwind"] for temperature (K), pressure (hPa),
-    ###     dewpoint (K), zonal wind speed (m/s), and meriodinal wind speed (m/s) respectively.
+    ###     dewpoint (K), zonal wind speed (m/s), meriodinal wind speed (m/s), and geopotential height (m) respectively.
     ###     Arrays are (Time, Level) with lowest level first.
     def get_sounding(self, point=None, period=None, filedate=None):
         
         #Variable name list
-        var_names = ["Temperature", "U component of wind", "V component of wind", "Relative humidity"]
+        var_names = ["Temperature", "U component of wind", "V component of wind", "Relative humidity", "Geopotential Height"]
         dict_keys = ["temp", "uwind", "vwind", "dewp", "pres"]
 
         #Create list to hold soundings

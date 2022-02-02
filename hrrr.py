@@ -328,13 +328,13 @@ class HRRRANL:
     ### Outputs:
     ###   sounding, dictionary of lists containing sounding info, or list of such dictionaries with len(points)
     ###     dictionaries are keyed ["temp", "pres", "dewp", "uwind", "vwind"] for temperature (K), pressure (hPa),
-    ###     dewpoint (K), zonal wind speed (m/s), and meriodinal wind speed (m/s) respectively.
+    ###     dewpoint (K), zonal wind speed (m/s), meriodinal wind speed (m/s), and geopotential height (m) respectively.
     ###     Arrays are (Time, Level) with lowest level first.
     def get_sounding(self, point=None, period=None, filedate=None):
 
         #Variable name list
-        var_names = ["Temperature", "U component of wind", "V component of wind", "Relative humidity"]
-        dict_keys = ["temp", "uwind", "vwind", "dewp", "pres"]
+        var_names = ["Temperature", "U component of wind", "V component of wind", "Relative humidity", "Geopotential Height"]
+        dict_keys = ["temp", "uwind", "vwind", "dewp", "pres", "height"]
 
         #Create list to hold soundings
         sounding = []
@@ -356,6 +356,7 @@ class HRRRANL:
 
                 #Retrieve messages from files
                 for [vn, dk] in zip(var_names, dict_keys):
+                    print("HRRR", vn)
                     messages = self.get_var(name=vn, typeOfLevel="isobaricInhPa", period=period, filedate=filedate)
 
                     #Loop over time and layers
@@ -490,7 +491,7 @@ class HRRRANL:
             self.open_grib(filedate)
             
             if list_flag:
-            
+                
                 for n, l in zip(name, level):
                 
                     #Pull the data
@@ -499,6 +500,10 @@ class HRRRANL:
                         vars[n].append(self.grib.select(name=n, level=l, **kwords)[0].values[self.yind1:self.yind2, self.xind1:self.xind2])
                     else: #Name and level but returning the messages themselves
                         vars[n].append(self.grib.select(name=n, level=l, **kwords))
+
+                for n in name:
+                    vars[n] = numpy.squeeze(numpy.array(vars[n]))
+                return vars
 
             else:
             
@@ -517,8 +522,9 @@ class HRRRANL:
                 else: #Name and level but returning the messages themselves
                     vars.append(self.grib.select(name=name, level=level, **kwords))
 
-            #Return the data
-            return numpy.squeeze(numpy.array(vars))
+                #Return the data
+                print(vars)
+                return numpy.squeeze(numpy.array(vars))
 
         #Loop over each file in hrrr dataset
         #This code only fires if the user selected a period
@@ -530,9 +536,9 @@ class HRRRANL:
 
             #Open the file (Don't reset the current file while looping through a period.)
             grib = pygrib.open(f)
-
-            if list_flag:
             
+            if list_flag:
+                
                 for n, l in zip(name, level):
                
                     if values: #Name, level, and requesting values only

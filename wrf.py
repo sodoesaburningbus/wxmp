@@ -470,13 +470,14 @@ class WRFANL:
     ###   gid, integer, optional, grid id to pull sounding from. Defaults to current working grid.
     ###   period, tuple of date objects, optional, start and end times of desired analysis Defaults to working analysis period.
     ###   filedate, datetime object, optional, date of file to pull. (Only retreives one file's data if set). Defaults to None.
+    ###   interp, array of floats, optional, specified levels for interpolation, defaults None
     ###
     ### Outputs:
     ###   sounding, dictionary of lists containing sounding info, or list of such dictionaries with len(points)
-    ###     dictionaries are keyed ["temp", "pres", "dewp", "uwind", "vwind"] for temperature (K), pressure (hPa),
-    ###     dewpoint (K), zonal wind speed (m/s), and meriodinal wind speed (m/s) respectively.
+    ###     dictionaries are keyed ["temp", "pres", "dewp", "uwind", "vwind", "height"] for temperature (K), pressure (hPa),
+    ###     dewpoint (K), zonal wind speed (m/s), meriodinal wind speed (m/s), and geopotential height (m) respectively.
     ###     Note that winds are rotated to Earth coordinates.
-    def get_sounding(self, point, gid=None, period=None, filedate=None):
+    def get_sounding(self, point, gid=None, period=None, filedate=None, interp=None):
 
         #Force lons and lats into lists.
         #This enables program consistency and user convenience.
@@ -498,8 +499,9 @@ class WRFANL:
         #Pull soundings at given locations
         sounding = []
         for p in point:
+        
             #Retreive data
-            data = self.get_var(["T", "P", "PB", "QVAPOR", "U", "V", "SINALPHA", "COSALPHA"], point=p, gid=gid, period=(tstart, tend), filedate=filedate)
+            data = self.get_var(["T", "P", "PB", "QVAPOR", "U", "V", "SINALPHA", "COSALPHA", "PHB", "PH"], point=p, gid=gid, period=(tstart, tend), filedate=filedate)
 
             #Calculate actual temperature and pressure
             ptemp = data["T"]+300.0 #Add WRF base temp to variable
@@ -513,10 +515,29 @@ class WRFANL:
             uwind = data["U"]*data["COSALPHA"]-data["V"]*data["SINALPHA"]
             vwind = data["V"]*data["COSALPHA"]+data["U"]*data["SINALPHA"]
 
+            
+
+            # Compute height (and destagger)
+            height = (data["PHB"]+data["PH"])/at.G
+            height = (height[1:]+height[:-1])/2.0            
+
+            # Interpolate to specified levels if necessary
+            try:
+                len(interp) # Fails if interp is None
+                temp = numpy.interp(interp, height, temp)
+                pres = numpy.interp(interp, height, pres)
+                dewp = numpy.interp(interp, height, dewp)
+                uwind = numpy.interp(interp, height, uwind)
+                vwind = numpy.interp(interp, height, vwind)
+                height = numpy.interp(interp, height, height)
+                            
+            except:
+                pass
+
             #Append sounding to list
             sounding.append({"temp":numpy.atleast_2d(temp), "pres":numpy.atleast_2d(pres/100.0),
                 "dewp":numpy.atleast_2d(dewp), "uwind":numpy.atleast_2d(uwind),
-                "vwind":numpy.atleast_2d(vwind)})
+                "vwind":numpy.atleast_2d(vwind), "height":numpy.atleast_2d(height)})
 
         #Return soundings as list
         #or as dictionary if only one.
@@ -555,7 +576,7 @@ class WRFANL:
             tstart = period[0]
             tend = period[1]
         
-        #Calulcate user point if given
+        #Calculate user point if given
         if (point != None):
             (xind, yind) = self.get_point(point, gid, gcoord=False)
         
@@ -592,13 +613,17 @@ class WRFANL:
                             if (point == None): #Grab variable over region
                                 if (fn.variables[vl].ndim == 3): #2D case (because time axis)
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,self.yind1:self.yind2,self.xind1:self.xind2]))
-                                else: #3D case
+                                elif (fn.variables[vl].ndim == 4): #3D case
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,self.yind1:self.yind2,self.xind1:self.xind2]))
+                                else: #1D case like XTIME
+                                    vars[vl].append(numpy.squeeze(fn.variables[vl][:]))
                             else: #Grab var at a point
                                 if (fn.variables[vl].ndim == 3): #2D case (because time axis)
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,yind,xind]))
-                                else: #3D case
+                                elif (fn.variables[vl].ndim == 4): #3D case
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,yind,xind]))
+                                else: #1D case like XTIME
+                                    vars[vl].append(numpy.squeeze(fn.variables[vl][:]))
 
                 else: #No subsetting of data
                     for vl in var_labels: #Loop over each variable
@@ -607,11 +632,10 @@ class WRFANL:
                             else: #Grab var at a point
                                 if (fn.variables[vl].ndim == 3): #2D case (because time axis)
                                     vars[vl].append(numpy.squeeze(fn.variables[vl][:,yind,xind]))
-                                else: #3D case #3D case
-                                    try:
-                                        vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,yind,xind]))
-                                    except: #1D case like XTIME
-                                        vars[vl].append(numpy.squeeze(fn.variables[vl][:]))
+                                elif (fn.variables[vl].ndim == 4): #3D case
+                                    vars[vl].append(numpy.squeeze(fn.variables[vl][:,:,yind,xind]))
+                                else: #1D case like XTIME
+                                    vars[vl].append(numpy.squeeze(fn.variables[vl][:]))
             
             except Exception as err:
                 fn.close()
@@ -637,7 +661,7 @@ class WRFANL:
     ### Inputs:
     ###   point, tuple of floats, (lon, lat) of forecast location
     ###   gid, optional, integer, grid to analyze. Default is current grid.
-    ###   period, optional, tuple of datetime objects, (start, end) temporal bounds of plot.
+    ###   period, optional, tuple of datetime objects, (start, end) temporal bounds of forecast.
     ###     Defaults to current analysis period.
     ### Outputs:
     ###   tmax, float, forecasted maximum temperature [F]
