@@ -152,13 +152,14 @@ class WRFSCM:
     ###   gid, integer, optional, grid id to pull sounding from. Defaults to current working grid.
     ###   period, tuple of date objects, optional, start and end times of desired analysis Defaults to working analysis period.
     ###   filedate, datetime object, optional, date of file to pull. (Only retreives one file's data if set). Defaults to None.
+    ###   interp, array of floats, optional, specified levels for interpolation, defaults None
     ###
     ### Outputs:
     ###   sounding, dictionary of lists containing sounding info, or list of such dictionaries with len(points)
     ###     dictionaries are keyed ["temp", "pres", "dewp", "uwind", "vwind"] for temperature (K), pressure (hPa),
     ###     dewpoint (K), zonal wind speed (m/s), and meriodinal wind speed (m/s) respectively.
     ###     Note that winds are rotated to Earth coordinates.
-    def get_sounding(self, period=None, anldate=None):
+    def get_sounding(self, period=None, anldate=None, interp=None):
             
         #Determine time period to retreive variables over
         if (period == None):
@@ -190,8 +191,22 @@ class WRFSCM:
             uwind = data["U"]*data["COSALPHA"]-data["V"]*data["SINALPHA"]
             vwind = data["V"]*data["COSALPHA"]+data["U"]*data["SINALPHA"]
 
-        # Compute height
+        # Compute height (and destagger)
         height = (data["PHB"]+data["PH"])/at.G
+        height = (height[1:]+height[:-1])/2.0            
+
+        # Interpolate to specified levels if necessary
+        try:
+            len(interp) # Fails if interp is None
+            temp = numpy.interp(interp, height, temp)
+            pres = numpy.interp(interp, height, pres)
+            dewp = numpy.interp(interp, height, dewp)
+            uwind = numpy.interp(interp, height, uwind)
+            vwind = numpy.interp(interp, height, vwind)
+            height = numpy.interp(interp, height, height)
+                        
+        except:
+            pass
 
         #Append sounding to list
         sounding.append({"temp":numpy.atleast_2d(temp), "pres":numpy.atleast_2d(pres/100.0),
