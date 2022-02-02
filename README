@@ -8,12 +8,24 @@ as this README remains unaltered.
 Files included in package:
 Module files:
  gfs.py - Contains classes to work with GFS data sets
+ hrrr.py - COntains class for accessing HRRR data
  wrf.py - Contains classes to work with the WRF model
+ wrfscm.py - Contains classes to work with the WRF SCM model.
+
+
+Modules under development:
  wxmpi.py - Contains class for interfacing with data set classes
+ merra_dap.py - Contains class for accessing MERRA data via OpenDAAP
+ ramsscm - For working with the RAMS SCM model
 
 #Example files in the examples directory:
- test_gfs.py - Runs some basic examples of the GFS classes
- test_wrf.py - Runs some basic examples of the WRF classes
+ demo_gfs.py
+ demo_hrrr.py
+ demo_merra_dap.py
+ demo_ramsscm.py
+ demo_wrf.py
+ demo_wrfscm.py
+ demo_wxmpi.py
 
 #Supporting files:
  README - This file
